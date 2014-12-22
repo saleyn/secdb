@@ -1,4 +1,10 @@
+bin/stockdb-reader
+*.beam
+*.app
+*.o
+db
 test/temp
 .eunit/
 .stockdb_dialyzer.plt
 .*.swp
+env.mk

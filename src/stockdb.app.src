@@ -1,8 +1,10 @@
 {application, stockdb, [
   {description, "Stock database format"},
-  {vsn, "0.1"},
+  {vsn, "git"},
+  {id,  "git"},
   {registered, []},
   {applications, [kernel, stdlib]},
+  {modules, []},
   {mod, {stockdb_app, []}}
 ]}.
 

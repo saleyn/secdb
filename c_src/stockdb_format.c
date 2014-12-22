@@ -1,13 +1,8 @@
 #include <stdint.h>
+#include <strings.h>
 #include "erl_nif.h"
-#include <sys/mman.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <string.h>
 #include <errno.h>
 #include <stdio.h>
-#include <unistd.h>
-#include <time.h>
 #include <arpa/inet.h>
 
 struct BitReader {
