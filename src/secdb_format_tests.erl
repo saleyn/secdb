@@ -1,6 +1,6 @@
--module(stockdb_format_tests).
--include("../include/stockdb.hrl").
--include("stockdb.hrl").
+-module(secdb_format_tests).
+-include("../include/secdb.hrl").
+-include("secdb.hrl").
 
 % EUnit tests
 -include_lib("eunit/include/eunit.hrl").
@@ -19,16 +19,16 @@ full_md_test() ->
   BinSize = byte_size(Bin),
   Tail = <<7, 239, 183, 19>>,
 
-  ?assertEqual(Bin, stockdb_format:encode_full_md(#md{timestamp = Timestamp, bid = RealBid, ask = RealAsk}, Scale)),
-  ?assertEqual(Bin, stockdb_format:encode_full_md(Timestamp, [Bid, Ask])),
-  ?assertEqual(Bin, stockdb_format:encode_full_md(Timestamp, Bid, Ask)),
+  ?assertEqual(Bin, secdb_format:encode_full_md(#md{timestamp = Timestamp, bid = RealBid, ask = RealAsk}, Scale)),
+  ?assertEqual(Bin, secdb_format:encode_full_md(Timestamp, [Bid, Ask])),
+  ?assertEqual(Bin, secdb_format:encode_full_md(Timestamp, Bid, Ask)),
 
-  ?assertEqual({Timestamp, Bid, Ask, byte_size(Bin)}, stockdb_format:decode_full_md(<<Bin/binary, Tail/bitstring>>, 2)),
+  ?assertEqual({Timestamp, Bid, Ask, byte_size(Bin)}, secdb_format:decode_full_md(<<Bin/binary, Tail/bitstring>>, 2)),
   
   ?assertEqual({ok, #md{timestamp = Timestamp, bid = Bid, ask = Ask}, byte_size(Bin)},
-    stockdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2)),
-  ?assertMatch({ok, #md{}, BinSize}, stockdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2, #md{}, Scale)),
-  {ok, #md{} = MD, _} = stockdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2, #md{}, Scale),
+    secdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2)),
+  ?assertMatch({ok, #md{}, BinSize}, secdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2, #md{}, Scale)),
+  {ok, #md{} = MD, _} = secdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2, #md{}, Scale),
   ?assertEqualMD(#md{timestamp = Timestamp, bid = RealBid, ask = RealAsk}, MD).
   
 
@@ -41,15 +41,15 @@ full_md_negative_price_test() ->
     -1673:32/signed-integer, 15:32/integer,   -1700:32/signed-integer, 90:32/integer>>,
   Tail = <<7, 239, 183, 19>>,
 
-  ?assertEqual(Bin, stockdb_format:encode_full_md(Timestamp, [Bid, Ask])),
-  ?assertEqual(Bin, stockdb_format:encode_full_md(Timestamp, Bid, Ask)),
-  ?assertEqual({Timestamp, Bid, Ask, byte_size(Bin)}, stockdb_format:decode_full_md(<<Bin/binary, Tail/bitstring>>, 2)),
-  ?assertEqual({ok, #md{timestamp = Timestamp, bid = Bid, ask = Ask}, byte_size(Bin)}, stockdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2)).
+  ?assertEqual(Bin, secdb_format:encode_full_md(Timestamp, [Bid, Ask])),
+  ?assertEqual(Bin, secdb_format:encode_full_md(Timestamp, Bid, Ask)),
+  ?assertEqual({Timestamp, Bid, Ask, byte_size(Bin)}, secdb_format:decode_full_md(<<Bin/binary, Tail/bitstring>>, 2)),
+  ?assertEqual({ok, #md{timestamp = Timestamp, bid = Bid, ask = Ask}, byte_size(Bin)}, secdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2)).
 
 full_md_negative_volume_test() ->
   Timestamp = 16#138BDF77CBA,
   BidAsk = [[{1530, 250}, {1520, 111}], [{1673, -15}, {1700, 90}]],
-  ?assertException(error, function_clause, stockdb_format:encode_full_md(Timestamp, BidAsk)).
+  ?assertException(error, function_clause, secdb_format:encode_full_md(Timestamp, BidAsk)).
 
 
 delta_md_test() ->
@@ -71,14 +71,14 @@ delta_md_test() ->
   BinSize = byte_size(Bin),
   Tail = <<7, 239, 183, 19>>,
 
-  ?assertEqual(Bin, stockdb_format:encode_delta_md(#md{timestamp = Timestamp, bid = RealBid, ask = RealAsk}, PrevMD, Scale)),
-  ?assertEqual(Bin, stockdb_format:encode_delta_md(DTimestamp, [DBid, DAsk])),
-  ?assertEqual(Bin, stockdb_format:encode_delta_md(DTimestamp, DBid, DAsk)),
-  ?assertEqual({DTimestamp, DBid, DAsk, byte_size(Bin)}, stockdb_format:decode_delta_md(<<Bin/bitstring, Tail/bitstring>>, 2)),
-  ?assertEqual({ok, {delta_md, DTimestamp, DBid, DAsk}, byte_size(Bin)}, stockdb_format:decode_packet(<<Bin/bitstring, Tail/bitstring>>, 2)),
-  ?assertMatch({ok, _MD, BinSize}, stockdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2, PrevMD, Scale)),
+  ?assertEqual(Bin, secdb_format:encode_delta_md(#md{timestamp = Timestamp, bid = RealBid, ask = RealAsk}, PrevMD, Scale)),
+  ?assertEqual(Bin, secdb_format:encode_delta_md(DTimestamp, [DBid, DAsk])),
+  ?assertEqual(Bin, secdb_format:encode_delta_md(DTimestamp, DBid, DAsk)),
+  ?assertEqual({DTimestamp, DBid, DAsk, byte_size(Bin)}, secdb_format:decode_delta_md(<<Bin/bitstring, Tail/bitstring>>, 2)),
+  ?assertEqual({ok, {delta_md, DTimestamp, DBid, DAsk}, byte_size(Bin)}, secdb_format:decode_packet(<<Bin/bitstring, Tail/bitstring>>, 2)),
+  ?assertMatch({ok, _MD, BinSize}, secdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2, PrevMD, Scale)),
 
-  {ok, #md{} = MD, _} = stockdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2, PrevMD, Scale),
+  {ok, #md{} = MD, _} = secdb_format:decode_packet(<<Bin/binary, Tail/bitstring>>, 2, PrevMD, Scale),
   ?assertEqualMD(#md{timestamp = Timestamp, bid = RealBid, ask = RealAsk}, MD).
 
 
@@ -90,13 +90,13 @@ trade_test() ->
   Bin = <<16#C0000138BDF77CBA:64/integer, Price:32/integer, Volume:32/integer>>,
   Tail = <<7, 239, 183, 19>>,
 
-  ?assertEqual(Bin, stockdb_format:encode_trade(Timestamp, Price, Volume)),
-  ?assertEqual(Bin, stockdb_format:encode_trade(#trade{timestamp = Timestamp, price = Price/Scale, volume = Volume}, Scale)),
-  ?assertEqual({Timestamp, Price, Volume, byte_size(Bin)}, stockdb_format:decode_trade(<<Bin/binary, Tail/binary>>)),
+  ?assertEqual(Bin, secdb_format:encode_trade(Timestamp, Price, Volume)),
+  ?assertEqual(Bin, secdb_format:encode_trade(#trade{timestamp = Timestamp, price = Price/Scale, volume = Volume}, Scale)),
+  ?assertEqual({Timestamp, Price, Volume, byte_size(Bin)}, secdb_format:decode_trade(<<Bin/binary, Tail/binary>>)),
   ?assertEqual({ok, #trade{timestamp = Timestamp, price = Price, volume = Volume}, byte_size(Bin)},
-    stockdb_format:decode_packet(<<Bin/binary, Tail/binary>>, 42)),
+    secdb_format:decode_packet(<<Bin/binary, Tail/binary>>, 42)),
   ?assertEqual({ok, #trade{timestamp = Timestamp, price = Price/Scale, volume = Volume}, byte_size(Bin)},
-    stockdb_format:decode_packet(<<Bin/binary, Tail/binary>>, 42, #md{}, Scale)).
+    secdb_format:decode_packet(<<Bin/binary, Tail/binary>>, 42, #md{}, Scale)).
 
 trade_zerovolume_test() ->
   Timestamp = 16#138BDF77CBA,
@@ -105,10 +105,10 @@ trade_zerovolume_test() ->
   Bin = <<16#C0000138BDF77CBA:64/integer, Price:32/integer, Volume:32/integer>>,
   Tail = <<7, 239, 183, 19>>,
 
-  ?assertEqual(Bin, stockdb_format:encode_trade(Timestamp, Price, Volume)),
-  ?assertEqual({Timestamp, Price, Volume, byte_size(Bin)}, stockdb_format:decode_trade(<<Bin/binary, Tail/binary>>)),
+  ?assertEqual(Bin, secdb_format:encode_trade(Timestamp, Price, Volume)),
+  ?assertEqual({Timestamp, Price, Volume, byte_size(Bin)}, secdb_format:decode_trade(<<Bin/binary, Tail/binary>>)),
   ?assertEqual({ok, #trade{timestamp = Timestamp, price = Price, volume = Volume}, byte_size(Bin)},
-    stockdb_format:decode_packet(<<Bin/binary, Tail/binary>>, 42)).
+    secdb_format:decode_packet(<<Bin/binary, Tail/binary>>, 42)).
 
 trade_negative_test() ->
   Timestamp = 16#138BDF77CBA,
@@ -117,32 +117,32 @@ trade_negative_test() ->
   Bin = <<16#C0000138BDF77CBA:64/integer, Price:32/signed-integer, Volume:32/unsigned-integer>>,
   Tail = <<7, 239, 183, 19>>,
 
-  ?assertEqual(Bin, stockdb_format:encode_trade(Timestamp, Price, Volume)),
-  ?assertEqual({Timestamp, Price, Volume, byte_size(Bin)}, stockdb_format:decode_trade(<<Bin/binary, Tail/binary>>)),
+  ?assertEqual(Bin, secdb_format:encode_trade(Timestamp, Price, Volume)),
+  ?assertEqual({Timestamp, Price, Volume, byte_size(Bin)}, secdb_format:decode_trade(<<Bin/binary, Tail/binary>>)),
   ?assertEqual({ok, #trade{timestamp = Timestamp, price = Price, volume = Volume}, byte_size(Bin)},
-    stockdb_format:decode_packet(<<Bin/binary, Tail/binary>>, 42)),
+    secdb_format:decode_packet(<<Bin/binary, Tail/binary>>, 42)),
   ?assertEqual({ok, #trade{timestamp = Timestamp, price = Price/100, volume = Volume}, byte_size(Bin)},
-    stockdb_format:decode_packet(<<Bin/binary, Tail/binary>>, 42, anything, 100)),
+    secdb_format:decode_packet(<<Bin/binary, Tail/binary>>, 42, anything, 100)),
   % Negative volume must fail to encode
-  ?assertException(error, function_clause, stockdb_format:encode_trade(Timestamp, Price, -Volume)).
+  ?assertException(error, function_clause, secdb_format:encode_trade(Timestamp, Price, -Volume)).
 
 
 format_header_value_test() ->
-  ?assertEqual("2012-07-19", lists:flatten(stockdb_format:format_header_value(date, {2012, 7, 19}))),
-  ?assertEqual("MICEX.URKA", lists:flatten(stockdb_format:format_header_value(stock, 'MICEX.URKA'))),
-  ?assertEqual("17", lists:flatten(stockdb_format:format_header_value(depth, 17))),
-  ?assertEqual("17", lists:flatten(stockdb_format:format_header_value(scale, 17))),
-  ?assertEqual("17", lists:flatten(stockdb_format:format_header_value(chunk_size, 17))),
-  ?assertEqual("17", lists:flatten(stockdb_format:format_header_value(version, 17))).
+  ?assertEqual("2012-07-19", lists:flatten(secdb_format:format_header_value(date, {2012, 7, 19}))),
+  ?assertEqual("MICEX.URKA", lists:flatten(secdb_format:format_header_value(symbol, 'MICEX.URKA'))),
+  ?assertEqual("17", lists:flatten(secdb_format:format_header_value(depth, 17))),
+  ?assertEqual("17", lists:flatten(secdb_format:format_header_value(scale, 17))),
+  ?assertEqual("17", lists:flatten(secdb_format:format_header_value(chunk_size, 17))),
+  ?assertEqual("17", lists:flatten(secdb_format:format_header_value(version, 17))).
 
 parse_header_value_test() ->
-  ?assertEqual({2012, 7, 19}, stockdb_format:parse_header_value(date, "2012/07/19")),
-  ?assertEqual({2012, 7, 19}, stockdb_format:parse_header_value(date, "2012-07-19")),
-  ?assertEqual('MICEX.URKA', stockdb_format:parse_header_value(stock, "MICEX.URKA")),
-  ?assertEqual(17, stockdb_format:parse_header_value(depth, "17")),
-  ?assertEqual(17, stockdb_format:parse_header_value(scale, "17")),
-  ?assertEqual(17, stockdb_format:parse_header_value(chunk_size, "17")),
-  ?assertEqual(17, stockdb_format:parse_header_value(version, "17")).
+  ?assertEqual({2012, 7, 19}, secdb_format:parse_header_value(date, "2012/07/19")),
+  ?assertEqual({2012, 7, 19}, secdb_format:parse_header_value(date, "2012-07-19")),
+  ?assertEqual('MICEX.URKA', secdb_format:parse_header_value(symbol, "MICEX.URKA")),
+  ?assertEqual(17, secdb_format:parse_header_value(depth, "17")),
+  ?assertEqual(17, secdb_format:parse_header_value(scale, "17")),
+  ?assertEqual(17, secdb_format:parse_header_value(chunk_size, "17")),
+  ?assertEqual(17, secdb_format:parse_header_value(version, "17")).
 
 
 
@@ -155,12 +155,12 @@ parse_header_value_test() ->
 %   % Ask = [{12, 1}],
 %   Depth = length(Bid),
 %   Scale = 100,
-%   Bin = stockdb_format:encode_full_md(Timestamp, Bid ++ Ask),
-%   ?assertMatch({ok, {md, Timestamp, _, _}, <<>>}, stockdb_format:read_one_row(Bin, Depth, undefined, Scale)),
-%   {ok, {md, Timestamp, Bid1, Ask1}, <<>>} = stockdb_format:read_one_row(Bin, Depth, undefined, Scale),
+%   Bin = secdb_format:encode_full_md(Timestamp, Bid ++ Ask),
+%   ?assertMatch({ok, {md, Timestamp, _, _}, <<>>}, secdb_format:read_one_row(Bin, Depth, undefined, Scale)),
+%   {ok, {md, Timestamp, Bid1, Ask1}, <<>>} = secdb_format:read_one_row(Bin, Depth, undefined, Scale),
 %   ?assertEqual(Bid, [{round(P*Scale),V} || {P,V} <- Bid1]),
 %   ?assertEqual(Ask, [{round(P*Scale),V} || {P,V} <- Ask1]),
-%   ensure_error_on_shorter_bin(fun(B) -> stockdb_format:read_one_row(B, Depth, undefined, Scale) end, Bin),
+%   ensure_error_on_shorter_bin(fun(B) -> secdb_format:read_one_row(B, Depth, undefined, Scale) end, Bin),
 %   ok.
 %   
 % 
@@ -169,18 +169,18 @@ parse_header_value_test() ->
 %   Bid = [{1234, 715}, {1219, 201}, {1197, 1200}],
 %   Ask = [{1243, 601}, {1247, 1000}, {1260, 800}],
 %   Depth = length(Bid),
-%   Bin = stockdb_format:encode_full_md(Timestamp, Bid ++ Ask),
-%   ?assertEqual({ok, {md, Timestamp, Bid, Ask}, <<1,2,3,4>>}, stockdb_format:read_one_row(<<Bin/binary, 1,2,3,4>>, Depth)),
-%   ?assertEqual({Timestamp, [Bid, Ask], <<1,2,3,4>>}, stockdb_format:decode_full_md(<<Bin/binary, 1,2,3,4>>, Depth)),
-%   ensure_error_on_shorter_bin(fun(B) -> stockdb_format:read_one_row(B, Depth) end, Bin),
+%   Bin = secdb_format:encode_full_md(Timestamp, Bid ++ Ask),
+%   ?assertEqual({ok, {md, Timestamp, Bid, Ask}, <<1,2,3,4>>}, secdb_format:read_one_row(<<Bin/binary, 1,2,3,4>>, Depth)),
+%   ?assertEqual({Timestamp, [Bid, Ask], <<1,2,3,4>>}, secdb_format:decode_full_md(<<Bin/binary, 1,2,3,4>>, Depth)),
+%   ensure_error_on_shorter_bin(fun(B) -> secdb_format:read_one_row(B, Depth) end, Bin),
 % 
 %   N = 100000,
 %   L = lists:seq(1,N),
 %   B1 = <<Bin/binary, 1,2,3,4>>,
 %   T1 = erlang:now(),
-%   [stockdb_format:read_one_row(B1, Depth) || _ <- L],
+%   [secdb_format:read_one_row(B1, Depth) || _ <- L],
 %   T2 = erlang:now(),
-%   [stockdb_format:decode_full_md(B1, Depth) || _ <- L],
+%   [secdb_format:decode_full_md(B1, Depth) || _ <- L],
 %   T3 = erlang:now(),
 %   ?debugFmt("Full  ~p: nif ~B, erl ~B", [N, timer:now_diff(T2,T1), timer:now_diff(T3,T2)]),
 %   ok.
@@ -189,10 +189,10 @@ parse_header_value_test() ->
 %   Timestamp = 1343207118230,
 %   Price = 1234,
 %   Volume = 1000,
-%   Bin = stockdb_format:encode_trade(Timestamp, Price, Volume),
-%   ?assertEqual({ok, {trade, Timestamp, Price, Volume}, <<>>}, stockdb_format:read_one_row(Bin, 0)),
-%   ?assertEqual({ok, {trade, Timestamp, 12.34, Volume}, <<>>}, stockdb_format:read_one_row(Bin, 0, undefined, 100)),
-%   ensure_error_on_shorter_bin(fun(B) -> stockdb_format:read_one_row(B, 0, undefined, 100) end, Bin),
+%   Bin = secdb_format:encode_trade(Timestamp, Price, Volume),
+%   ?assertEqual({ok, {trade, Timestamp, Price, Volume}, <<>>}, secdb_format:read_one_row(Bin, 0)),
+%   ?assertEqual({ok, {trade, Timestamp, 12.34, Volume}, <<>>}, secdb_format:read_one_row(Bin, 0, undefined, 100)),
+%   ensure_error_on_shorter_bin(fun(B) -> secdb_format:read_one_row(B, 0, undefined, 100) end, Bin),
 %   ok.
 % 
 % c_decode_delta_md_test_disabled() ->
@@ -200,18 +200,18 @@ parse_header_value_test() ->
 %   Bid = [{0, 5}, {-1, 20}, {4334, 1200}],
 %   Ask = [{12, 0}, {0, 0}, {1000, 800}],
 %   Depth = length(Bid),
-%   Bin = stockdb_format:encode_delta_md(Timestamp, Bid ++ Ask),
-%   ?assertEqual({ok, {delta, Timestamp, Bid, Ask}, <<1,2,3,4>>}, stockdb_format:read_one_row(<<Bin/binary, 1,2,3,4>>, Depth)),
-%   ?assertEqual({Timestamp, [Bid, Ask], <<1,2,3,4>>}, stockdb_format:decode_delta_md(<<Bin/binary, 1,2,3,4>>, Depth)),
-%   ensure_error_on_shorter_bin(fun(B) -> stockdb_format:read_one_row(B, Depth) end, Bin),
+%   Bin = secdb_format:encode_delta_md(Timestamp, Bid ++ Ask),
+%   ?assertEqual({ok, {delta, Timestamp, Bid, Ask}, <<1,2,3,4>>}, secdb_format:read_one_row(<<Bin/binary, 1,2,3,4>>, Depth)),
+%   ?assertEqual({Timestamp, [Bid, Ask], <<1,2,3,4>>}, secdb_format:decode_delta_md(<<Bin/binary, 1,2,3,4>>, Depth)),
+%   ensure_error_on_shorter_bin(fun(B) -> secdb_format:read_one_row(B, Depth) end, Bin),
 % 
 %   N = 100000,
 %   L = lists:seq(1,N),
 %   B1 = <<Bin/binary, 1,2,3,4>>,
 %   T1 = erlang:now(),
-%   [stockdb_format:read_one_row(B1, Depth) || _ <- L],
+%   [secdb_format:read_one_row(B1, Depth) || _ <- L],
 %   T2 = erlang:now(),
-%   [stockdb_format:decode_delta_md(B1, Depth) || _ <- L],
+%   [secdb_format:decode_delta_md(B1, Depth) || _ <- L],
 %   T3 = erlang:now(),
 %   ?debugFmt("Delta ~p: nif ~B, erl ~B", [N, timer:now_diff(T2,T1), timer:now_diff(T3,T2)]),
 %   ok.
@@ -239,9 +239,9 @@ parse_header_value_test() ->
 %   MD3 = {md, 1343207197200, [{12.34, 715}, {12.195, 201}, {11.97, 1500}], [{12.435, 601}, {12.49, 1000}, {12.65, 850}]},
 %   Scale = 200,
 %   Depth = 3,
-%   {ok, MD1_, L1} = stockdb_format:read_one_row(Data, Depth, undefined, Scale),
-%   {ok, MD2_, L2} = stockdb_format:read_one_row(L1, Depth, MD1_, Scale),
-%   {ok, MD3_, _L3} = stockdb_format:read_one_row(L2, Depth, MD2_, Scale),
+%   {ok, MD1_, L1} = secdb_format:read_one_row(Data, Depth, undefined, Scale),
+%   {ok, MD2_, L2} = secdb_format:read_one_row(L1, Depth, MD1_, Scale),
+%   {ok, MD3_, _L3} = secdb_format:read_one_row(L2, Depth, MD2_, Scale),
 %   ?assertEqual(MD1,MD1_),
 %   ?assertEqual(MD2,MD2_),
 %   ?assertEqual(MD3,MD3_),
@@ -253,7 +253,7 @@ parse_header_value_test() ->
 %   Bid1 = [{1234, 715}, {1219, 201}, {1197, 1200}],
 %   Ask1 = [{1243, 601}, {1247, 1000}, {1260, 800}],
 %   Depth = length(Bid1),
-%   Bin1 = stockdb_format:encode_full_md(Timestamp1, Bid1 ++ Ask1),
+%   Bin1 = secdb_format:encode_full_md(Timestamp1, Bid1 ++ Ask1),
 %   
 %   Timestamp2 = 15, 
 %   Bid2 = [{0, 5}, {-1, 20}, {4334, 1200}],
@@ -267,18 +267,18 @@ parse_header_value_test() ->
 %     {Price + DPrice, Volume + DVolume}
 %   end, Ask1, Ask2),
 % 
-%   Bin2 = stockdb_format:encode_delta_md(Timestamp2, Bid2 ++ Ask2),
+%   Bin2 = secdb_format:encode_delta_md(Timestamp2, Bid2 ++ Ask2),
 %   
 %   Bin = <<Bin1/binary, Bin2/binary>>,
-%   % DBState = stockdb_raw:init_with_opts([{depth,Depth},{buffer,Bin}]),
+%   % DBState = secdb_raw:init_with_opts([{depth,Depth},{buffer,Bin}]),
 %   
-%   ?assertEqual({ok, {md, Timestamp1, Bid1, Ask1}, Bin2}, stockdb_format:read_one_row(Bin, Depth)),
-%   % {Event1,State2} = stockdb_raw:read_packet_from_buffer(DBState),
+%   ?assertEqual({ok, {md, Timestamp1, Bid1, Ask1}, Bin2}, secdb_format:read_one_row(Bin, Depth)),
+%   % {Event1,State2} = secdb_raw:read_packet_from_buffer(DBState),
 %   % ?assertEqual({md,Timestamp1,Bid1,Ask1}, Event1),
 %   MD = {md, Timestamp1, Bid1, Ask1},
-%   ?assertEqual({ok, {md, Timestamp2_, Bid2_, Ask2_}, <<>>}, stockdb_format:read_one_row(Bin2, Depth, MD)),
+%   ?assertEqual({ok, {md, Timestamp2_, Bid2_, Ask2_}, <<>>}, secdb_format:read_one_row(Bin2, Depth, MD)),
 % 
-%   % {Event2,_} = stockdb_raw:read_packet_from_buffer(State2),
+%   % {Event2,_} = secdb_raw:read_packet_from_buffer(State2),
 %   % ?assertEqual({md,Timestamp2_,Bid2_,Ask2_}, Event2),
 % 
 %   
@@ -286,13 +286,13 @@ parse_header_value_test() ->
 %   L = lists:seq(1,N),
 %   T1 = erlang:now(),
 %   [begin
-%     {ok, {md,_,_,_} = MD, Bin2} = stockdb_format:read_one_row(Bin, Depth),
-%     {ok, {md,_,_,_}, <<>>} = stockdb_format:read_one_row(Bin2,Depth, MD)
+%     {ok, {md,_,_,_} = MD, Bin2} = secdb_format:read_one_row(Bin, Depth),
+%     {ok, {md,_,_,_}, <<>>} = secdb_format:read_one_row(Bin2,Depth, MD)
 %   end || _ <- L],
 %   T2 = erlang:now(),
 %   % [begin
-%   %   {{md,_,_,_},State1} = stockdb_raw:read_packet_from_buffer(DBState),
-%   %   {{md,_,_,_},_State2} = stockdb_raw:read_packet_from_buffer(State1)
+%   %   {{md,_,_,_},State1} = secdb_raw:read_packet_from_buffer(DBState),
+%   %   {{md,_,_,_},_State2} = secdb_raw:read_packet_from_buffer(State1)
 %   % end || _ <- L],
 %   T3 = erlang:now(),
 %   ?debugFmt("Two delta ~p: nif ~B, erl ~B", [N, timer:now_diff(T2,T1), timer:now_diff(T3,T2)]),

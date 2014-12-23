@@ -1,10 +1,10 @@
--module(stockdb_raw_tests).
+-module(secdb_raw_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 -compile([export_all]).
 
 
--import(stockdb_test_helper, [tempfile/1, write_events_to_file/2, append_events_to_file/2, ensure_packets_equal/2, chunk_content/1]).
+-import(secdb_test_helper, [tempfile/1, write_events_to_file/2, append_events_to_file/2, ensure_packets_equal/2, chunk_content/1]).
 
 
 
@@ -25,10 +25,10 @@ foldl_test1() ->
   end,
 
   ?assertEqual(lists:foldl(CountFun, 0, chunk_content('full')),
-    stockdb_raw:foldl(CountFun, 0, File)),
+    secdb_raw:foldl(CountFun, 0, File)),
 
   ?assertEqual(lists:foldl(FoldFun2, 720, chunk_content('full')),
-    stockdb_raw:foldl(FoldFun2, 720, File)),
+    secdb_raw:foldl(FoldFun2, 720, File)),
 
   ok = file:delete(File).
 
@@ -54,9 +54,9 @@ foldl_range_test1() ->
   Events2 = chunk_content('110_2') ++ chunk_content('112'),
 
   ?assertEqual(lists:foldl(CountFun, 0, Events1),
-    stockdb_raw:foldl_range(CountFun, 0, File, Range1)),
+    secdb_raw:foldl_range(CountFun, 0, File, Range1)),
 
   ?assertEqual(lists:foldl(FoldFun2, 720, Events2),
-    stockdb_raw:foldl_range(FoldFun2, 720, File, Range2)),
+    secdb_raw:foldl_range(FoldFun2, 720, File, Range2)),
 
   ok = file:delete(File).

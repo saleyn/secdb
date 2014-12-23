@@ -264,21 +264,20 @@ namespace stockdb {
       // }
     }
 
-    unsigned bits_byte_offset() { return m_offset >> 3; }
+    unsigned        bits_byte_offset() const { return m_offset >> 3; }
 
     tuple<uint64_t> leb128_decode_unsigned();
     tuple<int64_t>  leb128_decode_signed();
 
-    const char* decode_delta
+    const char*     decode_delta
       (bool append, bool has_value, int& old, const char* reason);
 
     std::pair<rec_type, const char*> read_rec_type();
-
-    std::pair<int, const char*>  read_trade();
+    std::pair<int, const char*>      read_trade();
 
     /// @param a_append if true and current record type is market data delta,
     ///                 the delta values will be added to mkt_data() record
-    std::pair<int, const char*>  read_mkt_data(bool a_append = false);
+    std::pair<int, const char*>      read_mkt_data(bool a_append = false);
   };
 
   //----------------------------------------------------------------------------
@@ -367,7 +366,7 @@ namespace stockdb {
   /// Database I/O file management
   //----------------------------------------------------------------------------
   struct DBState {
-    static const int OFFSETLEN = 4; // in bytes
+    static const int OFFSETLEN_BITS = 4; // in bytes
 
     DBState();
     DBState(const std::string& a_filename, int a_verbose);
@@ -385,7 +384,7 @@ namespace stockdb {
     long         candle_offset  () const { return m_candle_offset  ;      }
     long         chunkmap_offset() const { return m_chunkmap_offset;      }
 
-    int          chunkmap_size  () const { return m_chunk_count*OFFSETLEN;}
+    int          chunkmap_size  () const { return m_chunk_count*OFFSETLEN_BITS;}
 
     std::deque<Chunk>& chunkmap ()       { return m_chunkmap;             }
     const Candle&      candle   () const { return m_candle;               }
@@ -401,9 +400,6 @@ namespace stockdb {
       // TODO: do chunk validation
       return true;
     }
-
-    const Candle& read_candle();
-    void          read_chunk_map();
 
   private:
     std::string       m_filename;
@@ -434,6 +430,9 @@ namespace stockdb {
 
     bool valid_offset(long a_pos) const { return m_mem    + a_pos <  m_mem_end; }
     bool check_space (long a_inc) const { return m_rd_ptr + a_inc <= m_mem_end; }
+
+    const Candle& read_candle();
+    void          read_chunk_map();
 
     //----------------------------------------------------------------------------
     template <class T>

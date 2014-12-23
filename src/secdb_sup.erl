@@ -1,4 +1,4 @@
--module(stockdb_sup).
+-module(secdb_sup).
 -export([start_link/0, stop/0, init/1]).
 
 start_link() ->

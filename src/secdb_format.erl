@@ -1,20 +1,20 @@
-%%% @doc stockdb_format: module that codes and decodes 
+%%% @doc secdb_format: module that codes and decodes 
 %%% actual data to/from binary representation.
 %%% Format version: 2
 %%% Here "changed" flags for delta fields are aggregated at
 %%% packet start to improve code/decode performance by
 %%% byte-aligning LEB128 parts
 
--module(stockdb_format).
+-module(secdb_format).
 -author({"Danil Zagoskin", 'z@gosk.in'}).
 
 -include_lib("eunit/include/eunit.hrl").
--include("../include/stockdb.hrl").
+-include("../include/secdb.hrl").
 
 -on_load(init_nif/0).
 
--export([encode_full_md/2, encode_full_md/3, decode_full_md/2]).
--export([encode_delta_md/2, encode_delta_md/3, decode_delta_md/2]).
+-export([encode_full_md/2,  decode_full_md/1]).
+-export([encode_delta_md/3, decode_delta_md/2]).
 -export([encode_trade/2, encode_trade/3, decode_trade/1]).
 -export([format_header_value/2, parse_header_value/2]).
 
@@ -23,91 +23,68 @@
 
 
 init_nif() ->
-  Path = filename:dirname(code:which(?MODULE)) ++ "/../priv",
-  Load = erlang:load_nif(Path ++ "/stockdb_format", 0),
+  _Path = filename:dirname(code:which(?MODULE)) ++ "/../priv",
+  % Testing: don't load the NIF
+  %Load = erlang:load_nif(Path ++ "/secdb_format", 0),
+  Load = {error, {testing, skipped}},
   case Load of
     ok -> ok;
-    {error, {Reason,Text}} -> io:format("Load stockdb_format failed. ~p:~p~n", [Reason, Text])
+    {error, {Reason,Text}} -> io:format("Load secdb_format failed. ~p:~p~n", [Reason, Text])
   end,
   ok.
 
-%% Utility: lists module does not have this
-nested_foldl(Fun, Acc0, List) when is_list(List) ->
-  lists:foldl(fun(E, Acc) -> nested_foldl(Fun, Acc, E) end, Acc0, List);
-nested_foldl(Fun, Acc, Element) ->
-  Fun(Element, Acc).
-
-
-
 %% @doc Encode full MD packet with given timestamp and (nested) bid/ask list
--spec encode_full_md(Timestamp::integer(), BidAsk::[{Price::integer(), Volume::integer()}]) -> iolist().
-encode_full_md(Timestamp, BidAsk) when is_integer(Timestamp) andalso is_list(BidAsk) ->
-  nested_foldl(fun append_full_PV/2, <<1:1, 0:1, Timestamp:62/integer>>, BidAsk);
 
+-spec encode_full_md(Timestamp::integer(), BidAsk::[{Price::integer(), Volume::integer()}]) -> binary().
 %% @doc Accept #md{} and scale for high-level encoding
-encode_full_md(#md{timestamp = Timestamp, bid = Bid, ask = Ask}, Scale) ->
-  encode_full_md(Timestamp, [scale(Bid, Scale), scale(Ask, Scale)]).
+encode_full_md(#md{} = MD, 0)     -> encode_full_md2(MD, fun(P) -> P end);
+encode_full_md(#md{} = MD, Scale) -> encode_full_md2(MD, fun(P) -> round(Scale*P) end).
 
-%% @doc Alias for encode_full_md/2 with explicit Bid/Ask
-encode_full_md(Timestamp, Bid, Ask) ->
-  encode_full_md(Timestamp, [Bid, Ask]).
+encode_full_md2(#md{timestamp = Timestamp, bid = Bid, ask = Ask}, Fun) ->
+  <<1:1, 0:1, Timestamp:62/integer, (length(Bid)), (length(Ask)),
+    (<< <<(Fun(P)):32/integer, V:32/unsigned>> || {P,V} <- Bid>>)/binary,
+    (<< <<(Fun(P)):32/integer, V:32/unsigned>> || {P,V} <- Ask>>)/binary>>.
 
-append_full_PV({Price, Volume}, Acc) when is_integer(Price) andalso is_integer(Volume) andalso Volume >= 0 ->
-  <<Acc/binary, Price:32/signed-integer, Volume:32/unsigned-integer>>.
-
-
--spec decode_full_md(Buffer::binary(), Depth::integer()) ->
-  {Timestamp::integer(), BidAsk::[{Price::integer(), Volume::integer()}], ByteCount::integer()}.
-decode_full_md(<<1:1, 0:1, Timestamp:62/integer, BidAskTail/binary>>, Depth) ->
-  {Bid, AskTail} = decode_full_bidask(BidAskTail, Depth),
-  {Ask, _Tail} = decode_full_bidask(AskTail, Depth),
-  {Timestamp, Bid, Ask, 8 + 2*2*Depth*4}.
-
-decode_full_bidask(Tail, 0) ->
-  {[], Tail};
-decode_full_bidask(<<Price:32/signed-integer, Volume:32/unsigned-integer, Tail/binary>>, Depth) ->
-  Line = {Price, Volume},
-  {TailLines, FinalTail} = decode_full_bidask(Tail, Depth - 1),
-  {[Line | TailLines], FinalTail}.
-
+-spec decode_full_md(Buffer::binary()) ->
+  {Timestamp::integer(),
+    Bids :: [{Price::integer(), Volume::integer()}],
+    Asks :: [{Price::integer(), Volume::integer()}], ByteCount::integer(), Tail::binary()}.
+decode_full_md(<<1:1, 0:1, Timestamp:62/integer, BCnt, ACnt, Rest/binary>>) ->
+  BNum = 2*4*BCnt,
+  ANum = 2*4*ACnt,
+  <<BBids:BNum/binary, BAsks:ANum/binary, Tail/binary>>    = Rest,
+  Bids = [{Px, Vol} || <<Px:32/integer, Vol:32/unsigned>> <= BBids, not (Px =:= 0 andalso Vol =:= 0)],
+  Asks = [{Px, Vol} || <<Px:32/integer, Vol:32/unsigned>> <= BAsks, not (Px =:= 0 andalso Vol =:= 0)],
+  BidAskByteLen = BNum + ANum,
+  {Timestamp, Bids, Asks, 8 + 2*BidAskByteLen, Tail}.
 
 %% @doc Encode delta MD packet with given timestamp delta and (nested) bid/ask delta list
--spec encode_delta_md(TimeDelta::integer(), BidAskDelta::[{DPrice::integer(), DVolume::integer()}]) -> iolist().
-encode_delta_md(TimeDelta, BidAskDelta) ->
+-spec encode_delta_md(TimeDelta::integer(),
+    BidDeltas::[{DPrice::integer(), DVolume::integer()}],
+    AskDeltas::[{DPrice::integer(), DVolume::integer()}]) -> binary().
+encode_delta_md(TimeDelta, BidDeltas, AskDeltas) ->
+  BidsMask = << <<(has_value(P)):1, (has_value(V)):1>> || {P, V} <- BidDeltas>>,
+  AsksMask = << <<(has_value(P)):1, (has_value(V)):1>> || {P, V} <- AskDeltas>>,
+  % Calculate mask bit padding
+  BMSize   = bit_size(BidsMask) + bit_size(AsksMask),
   % Bit mask length is 4*Depth, so wee can align it to 4 bits, leaving extra space for future
-  Header = <<0:4/integer>>,
-  TimeBin = leb128:encode(TimeDelta),
-  {HBitMask, DataBin} = nested_foldl(fun({DPrice, DVolume}, {_Bitmask, _DataBin} = AccIn) ->
-        PriceAdded = add_delta_field(DPrice, AccIn),
-        add_delta_field(DVolume, PriceAdded)
-    end, {Header, <<>>}, BidAskDelta),
-  HBitMaskPadded = pad_to_octets(HBitMask),
-  <<HBitMaskPadded/binary, TimeBin/binary, DataBin/binary>>.
+  BMPad    = 8 - (BMSize rem 8) - 4,
+  <<0:4/integer, BidsMask/bitstring, AsksMask/bitstring, 0:BMPad,
+    % Encode timestamp
+    (leb128:encode(TimeDelta))/binary,
+    % Encode bids:
+    (<< <<(encode_pv(PV))/binary>> || PV <- BidDeltas >>)/binary,
+    % Encode asks:
+    (<< <<(encode_pv(PV))/binary>> || PV <- AskDeltas >>)/binary
+  >>.
 
-%% @doc Alias for encode_delta_md/2 with explicit Bid/Ask
-encode_delta_md(TimeDelta, DBid, DAsk) when is_integer(TimeDelta) andalso is_list(DBid) andalso is_list(DAsk) ->
-  encode_delta_md(TimeDelta, [DBid, DAsk]);
+has_value(0) -> 0;
+has_value(_) -> 1.
 
-%% @doc Accept new md, previous md, scale for high-level encoding
-encode_delta_md(#md{} = MD, #md{} = PrevMD, Scale) ->
-  #md{timestamp = TimeDelta, bid = DBid, ask = DAsk} = compute_delta(PrevMD, MD),
-  TimeDelta >= 0 orelse erlang:error({time_delta_negative,MD#md.timestamp,PrevMD#md.timestamp}),
-  encode_delta_md(TimeDelta, [scale(DBid, Scale), scale(DAsk, Scale)]).
-
-%% Utility: append bit to bitmask and (if not zero) value to data accumulator
-add_delta_field(0, {BitMask, DataBin}) ->
-  % Zero value. Append 0 to bitmask
-  {<<BitMask/bitstring, 0:1>>, DataBin};
-
-add_delta_field(Value, {BitMask, DataBin}) ->
-  % non-zero value. Append 1 to bitmask and binary value to data
-  ValueBin = leb128:encode_signed(Value),
-  {<<BitMask/bitstring, 1:1>>, <<DataBin/binary, ValueBin/binary>>}.
-
-pad_to_octets(BS) ->
-  PadSize = erlang:byte_size(BS)*8 - erlang:bit_size(BS),
-  <<BS/bitstring, 0:PadSize>>.
-
+encode_pv({0, 0}) -> <<>>;
+encode_pv({0, V}) -> leb128:encode_signed(V);
+encode_pv({P, 0}) -> leb128:encode_signed(P);
+encode_pv({P, V}) -> <<(leb128:encode_signed(P))/binary, (leb128:encode_signed(V))/binary>>.
 
 -spec decode_delta_md(Buffer::binary(), Depth::integer()) ->
   {TimeDelta::integer(),
@@ -121,18 +98,21 @@ decode_delta_md(<<0:1, _/bitstring>> = Bin, Depth) ->
   % Parse packet
   <<_:4, BidBitMask:HalfBMSize/bitstring, AskBitMask:HalfBMSize/bitstring, _:BMPadSize/bitstring, DataTail/binary>> = Bin,
   {TimeDelta, DBA_Tail} = leb128:decode(DataTail),
-  {DBid, DA_Tail} = decode_PVs(DBA_Tail, BidBitMask),
-  {DAsk, Tail} = decode_PVs(DA_Tail, AskBitMask),
-  ByteCount = erlang:byte_size(Bin) - erlang:byte_size(Tail),
+  {DBid,       DA_Tail} = decode_pvs(DBA_Tail, BidBitMask),
+  {DAsk,          Tail} = decode_pvs(DA_Tail,  AskBitMask),
+  ByteCount             = byte_size(Bin) - byte_size(Tail),
   {TimeDelta, DBid, DAsk, ByteCount}.
 
-decode_PVs(DataBin, BitMask) ->
-  {RevPVs, Tail} = lists:foldl(fun({PF, VF}, {PVs, PVData}) ->
-        {P, VData} = get_delta_field(PF, PVData),
-        {V, Data} = get_delta_field(VF, VData),
-        {[{P, V} | PVs], Data}
-    end, {[], DataBin}, [{PF, VF} || <<PF:1, VF:1>> <= BitMask]),
-  {lists:reverse(RevPVs), Tail}.
+decode_pvs(Bin, BitMask) ->
+  decode_pvs(Bin, BitMask, 0, []).
+
+decode_pvs(DataBin, BitMask, Len, Acc) when Len < bit_size(BitMask) ->
+  <<_:Len/bitstring, PF:1, VF:1, _/binary>> = BitMask,
+  {P, VData} = get_delta_field(PF, DataBin),
+  {V,  Data} = get_delta_field(VF, VData),
+  decode_pvs(Data, BitMask, Len+2, [{P, V} | Acc]);
+decode_pvs(Tail, BitMask, Len, Acc) when Len =:= bit_size(BitMask) ->
+  {lists:reverse(Acc), Tail}.
 
 get_delta_field(0, Data) ->
   {0, Data};
@@ -166,8 +146,8 @@ decode_packet(Bin, Depth) ->
 do_decode_packet(Bin, Depth) ->
   do_decode_packet_erl(Bin, Depth).
 
-do_decode_packet_erl(<<1:1, 0:1, _/bitstring>> = Bin, Depth) ->
-  {Timestamp, Bid, Ask, Size} = decode_full_md(Bin, Depth),
+do_decode_packet_erl(<<1:1, 0:1, _/bitstring>> = Bin, _Depth) ->
+  {Timestamp, Bid, Ask, Size} = decode_full_md(Bin),
   {ok, #md{timestamp = Timestamp, bid = Bid, ask = Ask}, Size};
 
 do_decode_packet_erl(<<0:1, _/bitstring>> = Bin, Depth) ->
@@ -206,8 +186,8 @@ decode_packet(Bin, Depth, PrevMD, Scale, PrevTrade) ->
 do_decode_packet(Bin, Depth, PrevMD, Scale) ->
   do_decode_packet_erl(Bin, Depth, PrevMD, Scale).
 
-do_decode_packet_erl(<<1:1, 0:1, _/bitstring>> = Bin, Depth, _PrevMD, Scale) ->
-  {Timestamp, Bid, Ask, Size} = decode_full_md(Bin, Depth),
+do_decode_packet_erl(<<1:1, 0:1, _/bitstring>> = Bin, _Depth, _PrevMD, Scale) ->
+  {Timestamp, Bid, Ask, Size} = decode_full_md(Bin),
   {ok, #md{timestamp = Timestamp, bid = unscale(Bid, Scale), ask = unscale(Ask, Scale)}, Size};
 
 do_decode_packet_erl(<<0:1, _/bitstring>> = Bin, Depth, #md{} = PrevMD, Scale) ->
@@ -224,10 +204,10 @@ do_decode_packet(_Bin, _Depth, _PrevMD, _Scale, _PrevTrade) ->
   erlang:error(not_implemented).
 
 %% Utility: scale bid/ask when serializing
-scale(BidAsk, Scale) when is_list(BidAsk) andalso is_integer(Scale) ->
-  lists:map(fun({Price, Volume}) ->
-        {erlang:round(Price*Scale), Volume}
-    end, BidAsk).
+%% scale(BidAsk, Scale) when is_list(BidAsk) andalso is_integer(Scale) ->
+%%   lists:map(fun({Price, Volume}) ->
+%%         {erlang:round(Price*Scale), Volume}
+%%     end, BidAsk).
 
 %% Utility: unscale bid/ask when deserializing
 unscale(BidAsk, Scale) when is_list(BidAsk) ->
@@ -250,23 +230,16 @@ compute_delta(#md{timestamp = TS1, bid = B1, ask = A1}, #md{timestamp = TS2, bid
 
 compute_delta(BidAsk1, BidAsk2) when is_list(BidAsk1) andalso is_list(BidAsk2) ->
   % Count delta when going from BidAsk1 to BidAsk2 -> X = X2 - X1
-  lists:zipwith(fun({P1, V1}, {P2, V2}) ->
-        {P2 - P1, V2 - V1}
-    end, BidAsk1, BidAsk2).
+  lists:zipwith(fun({P1, V1}, {P2, V2}) -> {P2 - P1, V2 - V1} end, BidAsk1, BidAsk2).
 
 get_timestamp(<<1:1, _:1/integer, Timestamp:62/integer, _/binary>>) ->
   Timestamp.
 
 
 %% @doc serialize header value, used when writing header
-format_header_value(date, {Y, M, D}) ->
-  io_lib:format("~4..0B-~2..0B-~2..0B", [Y, M, D]);
-
-format_header_value(stock, Stock) ->
-  erlang:atom_to_list(Stock);
-
-format_header_value(_, Value) ->
-  io_lib:print(Value).
+format_header_value(date, {_,_,_} = Date) -> secdb_fs:date_to_list(Date);
+format_header_value(symbol, Symbol)       -> atom_to_list(Symbol);
+format_header_value(_, Value)             -> io_lib:print(Value).
 
 
 %% @doc deserialize header value, used when parsing header
@@ -294,8 +267,8 @@ parse_header_value(date, DateStr) ->
     erlang:list_to_integer(MS),
     erlang:list_to_integer(DS)};
 
-parse_header_value(stock, StockStr) ->
-  erlang:list_to_atom(StockStr);
+parse_header_value(symbol, SymbolStr) ->
+  erlang:list_to_atom(SymbolStr);
 
 parse_header_value(_, Value) ->
   Value.

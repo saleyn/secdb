@@ -1,9 +1,9 @@
--module(stockdb_test_helper).
+-module(secdb_test_helper).
 %%% Testing stuff.
 -compile(export_all).
 -include_lib("eunit/include/eunit.hrl").
--include("../include/stockdb.hrl").
--include("stockdb.hrl").
+-include("../include/secdb.hrl").
+-include("secdb.hrl").
 
 assertEqualMD(MD1, MD2, Opts) ->
   case compare_md(MD1, MD2) of
@@ -39,7 +39,7 @@ fixturefile(F) ->
 
 
 testdir() ->
-  case code:lib_dir(stockdb, test) of
+  case code:lib_dir(secdb, test) of
     {error, bad_name} -> "test";
     Else -> Else
   end.
@@ -109,16 +109,16 @@ write_events_to_file(File, Events) ->
 
 %% Simply append events to file
 append_events_to_file(File, Events) ->
-  {ok, S0} = stockdb_appender:open(File, [{stock, 'TEST'}, {date, {2012,7,25}}, {depth, 3}, {scale, 200}, {chunk_size, 300}]),
+  {ok, S0} = secdb_appender:open(File, [{symbol, 'TEST'}, {date, {2012,7,25}}, {depth, 3}, {scale, 200}, {chunk_size, 300}]),
   S1 = lists:foldl(fun(Event, State) ->
-        {ok, NextState} = stockdb_appender:append(Event, State),
+        {ok, NextState} = secdb_appender:append(Event, State),
         NextState
     end, S0, Events),
-  ok = stockdb:close(S1).
+  ok = secdb:close(S1).
 
 %% Comparing stuff.
 ensure_states_equal(State1, State2) ->
-  Names = record_info(fields, dbstate),
+  Names = record_info(fields, db),
   Blacklist = [file, buffer, buffer_end],
   F = fun(State) -> [{K,V} || {K,V} <- lists:zip(Names, tl(tuple_to_list(State))), not lists:member(K,Blacklist)] end,
   Res = lists:zipwith(fun

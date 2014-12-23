@@ -1,15 +1,15 @@
-%%% @doc StockDB iterator module
-%%% It accepts stockdb state and operates only with its buffer
+%%% @doc SymbolDB iterator module
+%%% It accepts secdb state and operates only with its buffer
 
--module(stockdb_iterator).
+-module(secdb_iterator).
 -author({"Danil Zagoskin", 'z@gosk.in'}).
 
 -include("log.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include("stockdb.hrl").
--include("../include/stockdb.hrl").
+-include("secdb.hrl").
+-include("../include/secdb.hrl").
 
-% Create new iterator from stockdb state
+% Create new iterator from secdb state
 -export([init/1]).
 
 % Apply filter
@@ -28,7 +28,7 @@
 -export([foldl/3, foldl/4]).
 
 -record(iterator, {
-    dbstate,
+    db,
     data_start,
     position,
     last_utc
@@ -42,10 +42,10 @@
   }).
 
 %% @doc Initialize iterator. Position at the very beginning of data
-init(#dbstate{} = DBState) ->
+init(#db{} = DBState) ->
   DataStart = first_chunk_offset(DBState),
   {ok, #iterator{
-      dbstate = DBState,
+      db = DBState,
       data_start = DataStart,
       position = DataStart}}.
 
@@ -53,7 +53,7 @@ init(#dbstate{} = DBState) ->
 filter(Source, FilterFun) ->
   filter(Source, FilterFun, undefined).
 filter(Source, FilterFun, State0) when is_atom(FilterFun) ->
-  filter(Source, fun stockdb_filters:FilterFun/2, State0);
+  filter(Source, fun secdb_filters:FilterFun/2, State0);
 filter(Source, FilterFun, State0) when is_function(FilterFun, 2) ->
   create_filter(Source, FilterFun, State0).
 
@@ -65,21 +65,21 @@ create_filter(Source, FilterFun, State0) when is_record(Source, iterator) orelse
 
 %% @doc replay last chunk and return finl state
 restore_last_state(Iterator) ->
-  #iterator{dbstate = LastState} = seek_utc(eof, Iterator),
+  #iterator{db = LastState} = seek_utc(eof, Iterator),
   % Drop buffer to free memory
-  LastState#dbstate{buffer = undefined}.
+  LastState#db{buffer = undefined}.
 
 
 %% @doc get start of first chunk
-first_chunk_offset(#dbstate{chunk_map = []} = _DBstate) ->
+first_chunk_offset(#db{chunkmap = []} = _DBstate) ->
   % Empty chunk map -> offset undefined
   undefined;
-first_chunk_offset(#dbstate{chunk_map = [{_N, _T, Offset}|_Rest]} = _DBstate) ->
+first_chunk_offset(#db{chunkmap = [{_N, _T, Offset}|_Rest]} = _DBstate) ->
   % Just return offset from first chunk
   Offset.
 
 %% @doc Set position to given time
-seek_utc(Time, #iterator{data_start = DataStart, dbstate = #dbstate{chunk_map = ChunkMap, date = Date}} = Iterator) ->
+seek_utc(Time, #iterator{data_start = DataStart, db = #db{chunkmap = ChunkMap, date = Date}} = Iterator) ->
   UTC = time_to_utc(Time, Date),
   ChunksBefore = case UTC of
     undefined -> [];
@@ -97,7 +97,7 @@ seek_utc(UTC, #filter{source = Source} = Filter) ->
   Filter#filter{source = seek_utc(UTC, Source)}.
 
 
-set_last_utc(Time, #iterator{dbstate = #dbstate{date = Date}} = Iterator) ->
+set_last_utc(Time, #iterator{db = #db{date = Date}} = Iterator) ->
   UTC = time_to_utc(Time, Date),
   Iterator#iterator{last_utc = UTC};
 
@@ -142,7 +142,7 @@ seek_until(UTC, #iterator{} = Iterator) ->
 read_event(#iterator{position = undefined} = Iterator) ->
   {eof, Iterator};
 
-read_event(#iterator{dbstate = #dbstate{buffer = FullBuffer} = DBState, position = Pos, last_utc = LastUTC} = Iterator) ->
+read_event(#iterator{db = #db{buffer = FullBuffer} = DBState, position = Pos, last_utc = LastUTC} = Iterator) ->
   <<_:Pos/binary, Buffer/binary>> = FullBuffer,
   {Event, ReadBytes, NewDBState} = case Buffer of
     <<>> -> {eof, 0, DBState};
@@ -151,7 +151,7 @@ read_event(#iterator{dbstate = #dbstate{buffer = FullBuffer} = DBState, position
   case packet_timestamp(Event) of
     Before when LastUTC == undefined orelse Before == undefined orelse Before =< LastUTC ->
       % Event is before given limit or we cannot compare
-      {Event, Iterator#iterator{dbstate = NewDBState, position = Pos + ReadBytes}};
+      {Event, Iterator#iterator{db = NewDBState, position = Pos + ReadBytes}};
     _After ->
       {eof, Iterator}
   end;
@@ -188,13 +188,13 @@ all_events(Iterator, RevEvents) ->
   end.
 
 %% @doc get first event from buffer when State is db state at the beginning of it
-get_first_packet(Buffer, #dbstate{depth = Depth, last_md = LastMD, scale = Scale} = State) ->
-  {ok, Packet, Size} = stockdb_format:decode_packet(Buffer, Depth, LastMD, Scale),
+get_first_packet(Buffer, #db{depth = Depth, last_md = LastMD, scale = Scale} = State) ->
+  {ok, Packet, Size} = secdb_format:decode_packet(Buffer, Depth, LastMD, Scale),
   NextState = case Packet of
     #md{timestamp = Timestamp} ->
-      State#dbstate{last_timestamp = Timestamp, last_md = Packet};
+      State#db{last_timestamp = Timestamp, last_md = Packet};
     #trade{timestamp = Timestamp} ->
-      State#dbstate{last_timestamp = Timestamp}
+      State#db{last_timestamp = Timestamp}
   end,
   {Packet, Size, NextState}.
 

@@ -1,6 +1,6 @@
--module(stockdb_saver).
+-module(secdb_saver).
 
--include("stockdb.hrl").
+-include("secdb.hrl").
 -include("log.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
@@ -15,39 +15,39 @@
 
 -record(saver, {
   db,
-  stock,
+  symbol,
   date,
   transform
 }).
 
 
-add_handler(Handler, Stock, Options) ->
-  add_specific_handler(Handler, Stock, Options, add_handler).
+add_handler(Handler, Symbol, Options) ->
+  add_specific_handler(Handler, Symbol, Options, add_handler).
 
-add_sup_handler(Handler, Stock, Options) ->
-  add_specific_handler(Handler, Stock, Options, add_sup_handler).
+add_sup_handler(Handler, Symbol, Options) ->
+  add_specific_handler(Handler, Symbol, Options, add_sup_handler).
 
 
 
-add_specific_handler(Handler, Stock, Options, Fun) ->
+add_specific_handler(Handler, Symbol, Options, Fun) ->
   Module = case proplists:get_value(id, Options) of
     undefined -> ?MODULE;
     Id -> {?MODULE, Id}
   end,
   case lists:member(Module, gen_event:which_handlers(Handler)) of
     true -> ok;
-    false -> ok = gen_event:Fun(Handler, Module, [Stock|Options])
+    false -> ok = gen_event:Fun(Handler, Module, [Symbol|Options])
   end.
 
 
 
 identity(Event, _) -> Event.
 
-init([Stock|Options]) ->
+init([Symbol|Options]) ->
   {Date, _} = calendar:universal_time(),
-  {ok,DB} = stockdb:open_append(Stock, Date, Options),
+  {ok,DB} = secdb:open_append(Symbol, Date, Options),
   Transform = proplists:get_value(transform, Options, {?MODULE, identity, []}),
-  {ok, #saver{db = DB, stock = Stock, date = Date, transform = Transform}}.
+  {ok, #saver{db = DB, symbol = Symbol, date = Date, transform = Transform}}.
 
 
 handle_event(RawEvent, #saver{transform = {M,F,A}, db = DB1} = Saver) ->
@@ -57,7 +57,7 @@ handle_event(RawEvent, #saver{transform = {M,F,A}, db = DB1} = Saver) ->
     Evt when is_tuple(Evt) -> [Evt]
   end,
   DB2 = lists:foldl(fun(Event, DB) ->
-    {ok, DB_} = stockdb:append(Event, DB),
+    {ok, DB_} = secdb:append(Event, DB),
     DB_
   end, DB1, Events),
   {ok, Saver#saver{db = DB2}}.
@@ -72,6 +72,6 @@ handle_call(Call, Saver) ->
 
 
 terminate(_,#saver{db = DB} = _Saver) -> 
-  stockdb:close(DB).
+  secdb:close(DB).
 
 code_change(_,Saver,_) -> {ok,Saver}.

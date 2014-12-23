@@ -1,10 +1,10 @@
-{application, stockdb, [
-  {description, "Stock database format"},
+{application, secdb, [
+  {description, "Symbol database format"},
   {vsn, "git"},
   {id,  "git"},
   {registered, []},
   {applications, [kernel, stdlib]},
   {modules, []},
-  {mod, {stockdb_app, []}}
+  {mod, {secdb_app, []}}
 ]}.
 

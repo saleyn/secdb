@@ -1,5 +1,5 @@
--module(stockdb_validator).
--include("stockdb.hrl").
+-module(secdb_validator).
+-include("secdb.hrl").
 -include("log.hrl").
 -include_lib("kernel/include/file.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -8,9 +8,9 @@
 -export([validate/1]).
 
 
-validate(#dbstate{path = Path, chunk_map = [], chunk_map_offset = ChunkMapOffset, chunk_size = ChunkSize} = State) ->
+validate(#db{path = Path, chunkmap = [], chunkmap_offset = ChunkMapOffset, chunk_size = ChunkSize} = State) ->
   ChunkCount = ?NUMBER_OF_CHUNKS(ChunkSize),
-  ChunkMapSize = ChunkCount*?OFFSETLEN div 8,
+  ChunkMapSize = ChunkCount*?OFFSETLEN_BITS div 8,
   GoodFileSize = ChunkMapOffset + ChunkMapSize,
   case file:read_file_info(Path) of
     {ok, #file_info{size = Size}} when Size > GoodFileSize ->
@@ -28,7 +28,7 @@ validate(#dbstate{path = Path, chunk_map = [], chunk_map_offset = ChunkMapOffset
   end;
   
 
-validate(#dbstate{path = Path, file = File, chunk_map = ChunkMap, chunk_map_offset = ChunkMapOffset, chunk_size = ChunkSize} = State) ->
+validate(#db{path = Path, file = File, chunkmap = ChunkMap, chunkmap_offset = ChunkMapOffset, chunk_size = ChunkSize} = State) ->
   {Number, Timestamp, Offset} = lists:last(ChunkMap),
   {ok, #file_info{size = Size}} = file:read_file_info(Path),
   AbsOffset = ChunkMapOffset + Offset,
@@ -48,7 +48,7 @@ validate(#dbstate{path = Path, file = File, chunk_map = ChunkMap, chunk_map_offs
   
   Daystart = utc_to_daystart(Timestamp),
 
-  State1#dbstate{
+  State1#db{
     daystart = Daystart,
     next_chunk_time = Daystart + timer:seconds(ChunkSize) * (Number + 1)
   }.
@@ -62,15 +62,15 @@ utc_to_daystart(UTC) ->
 validate_chunk(<<>>, _, State) ->
   {ok, State};
 
-validate_chunk(Chunk, Offset, #dbstate{last_md = MD, depth = Depth, scale = Scale} = State) ->
+validate_chunk(Chunk, Offset, #db{last_md = MD, depth = Depth, scale = Scale} = State) ->
   % ?debugFmt("decode_packet ~B/~B ~B ~B ~p", [Offset, size(Chunk),Depth, Scale, MD]),
-  case stockdb_format:decode_packet(Chunk, Depth, MD, Scale) of
+  case secdb_format:decode_packet(Chunk, Depth, MD, Scale) of
     {ok, {md, TS, _Bid, _Ask} = NewMD, Size} ->
       <<_:Size/binary, Rest/binary>> = Chunk,
-      validate_chunk(Rest, Offset + Size, State#dbstate{last_md = NewMD, last_timestamp = TS});
+      validate_chunk(Rest, Offset + Size, State#db{last_md = NewMD, last_timestamp = TS});
     {ok, {trade, TS, _, _}, Size} ->
       <<_:Size/binary, Rest/binary>> = Chunk,
-      validate_chunk(Rest, Offset + Size, State#dbstate{last_timestamp = TS});
+      validate_chunk(Rest, Offset + Size, State#db{last_timestamp = TS});
     {error, _Reason} ->
       {error, State, Offset}
   end.

@@ -1,8 +1,8 @@
--module(stockdb_validator_tests).
+-module(secdb_validator_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 
--import(stockdb_test_helper, [tempfile/1, fixturefile/1, ensure_states_equal/2, write_events_to_file/2, append_events_to_file/2, ensure_packets_equal/2, chunk_content/1]).
+-import(secdb_test_helper, [tempfile/1, fixturefile/1, ensure_states_equal/2, write_events_to_file/2, append_events_to_file/2, ensure_packets_equal/2, chunk_content/1]).
 
 db_repair_test() ->
   File = tempfile("db-repair-test.temp"),
@@ -15,7 +15,7 @@ db_repair_test() ->
   
   append_events_to_file(File, chunk_content('110_2') ++ chunk_content('112')),
 
-  FileEvents = stockdb:events({path, File}, undefined),
+  FileEvents = secdb:events({path, File}, undefined),
   lists:zipwith(fun(Expected, Read) ->
         ensure_packets_equal(Expected, Read)
     end,

@@ -1,7 +1,7 @@
--module(stockdb_filters).
+-module(secdb_filters).
 -author('Max Lapshin <max@maxidoors.ru>').
 
--include("../include/stockdb.hrl").
+-include("../include/secdb.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
 
@@ -131,10 +131,10 @@ lowest(Anything, _NoMatter) ->
 timestamp(#md{timestamp = Timestamp}) -> Timestamp;
 timestamp(#trade{timestamp = Timestamp}) -> Timestamp.
 
-value(_, #trade{price = Price}) -> Price;
+value(_, #trade{price = Price})      -> Price;
 value(high, #md{ask = [{Ask, _}|_]}) -> Ask;
 value(low,  #md{bid = [{Bid, _}|_]}) -> Bid;
-value(_, #md{} = MD) -> (value(high, MD) + value(low, MD))/2.
+value(_,    #md{}   = MD)            -> (value(high, MD) + value(low, MD))/2.
 
 test_candle(Input) ->
   test_candle(Input, undefined).

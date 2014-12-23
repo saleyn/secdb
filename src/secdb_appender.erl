@@ -1,9 +1,9 @@
--module(stockdb_appender).
+-module(secdb_appender).
 -author('Max Lapshin <max@maxidoors.ru>').
 
--include("../include/stockdb.hrl").
+-include("../include/secdb.hrl").
 -include_lib("eunit/include/eunit.hrl").
--include("stockdb.hrl").
+-include("secdb.hrl").
 -include("log.hrl").
 
 
@@ -20,26 +20,26 @@ open(Path, Opts) ->
   end.
 
 
-close(#dbstate{file = File} = State) ->
+close(#db{file = File} = State) ->
   write_candle(State),
   file:close(File),
   ok.
 
 
 write_events(Path, Events, Options) ->
-  {ok, S0} = stockdb_appender:open(Path, Options),
+  {ok, S0} = secdb_appender:open(Path, Options),
   S1 = lists:foldl(fun(Event, State) ->
-        {ok, NextState} = stockdb_appender:append(Event, State),
+        {ok, NextState} = secdb_appender:append(Event, State),
         NextState
     end, S0, Events),
-  ok = stockdb_appender:close(S1).
+  ok = secdb_appender:close(S1).
 
 
 
 
 %% @doc Here we create skeleton for new DB
 %% Structure of file is following:
-%% #!/usr/bin/env stockdb
+%% #!/usr/bin/env secdb
 %% header: value
 %% header: value
 %% header: value
@@ -52,12 +52,12 @@ create_new_db(Path, Opts) ->
   {ok, 0} = file:position(File, bof),
   ok = file:truncate(File),
 
-  {stock, Stock} = lists:keyfind(stock, 1, Opts),
+  {symbol, Symbol} = lists:keyfind(symbol, 1, Opts),
   {date, Date} = lists:keyfind(date, 1, Opts),
-  State = #dbstate{
+  State = #db{
     mode = append,
-    version = ?STOCKDB_VERSION,
-    stock = Stock,
+    version = ?SECDB_VERSION,
+    symbol = Symbol,
     date = Date,
     sync = not lists:member(nosync, Opts),
     path = Path,
@@ -68,22 +68,22 @@ create_new_db(Path, Opts) ->
   },
 
   {ok, CandleOffset0} = write_header(File, State),
-  CandleOffset = case State#dbstate.have_candle of
+  CandleOffset = case State#db.have_candle of
     true -> CandleOffset0;
     false -> undefined
   end,
   {ok, ChunkMapOffset} = write_candle(File, State),
-  {ok, _CMSize} = write_chunk_map(File, State),
+  {ok, _CMSize} = write_chunkmap(File, State),
 
-  {ok, State#dbstate{
+  {ok, State#db{
       file = File,
       candle_offset = CandleOffset,
-      chunk_map_offset = ChunkMapOffset
+      chunkmap_offset = ChunkMapOffset
     }}.
 
 
 open_existing_db(Path, _Opts) ->
-  stockdb_reader:open_existing_db(Path, [binary,write,read,raw]).
+  secdb_reader:open_existing_db(Path, [binary,write,read,raw]).
 
 
 % Validate event and return {Type, Timestamp} if valid
@@ -108,10 +108,10 @@ valid_bidask([{P,V}|_]) when is_number(P) andalso is_integer(V) andalso V >= 0 -
 valid_bidask(_) -> false.
 
 
-append(_Event, #dbstate{mode = Mode}) when Mode =/= append ->
+append(_Event, #db{mode = Mode}) when Mode =/= append ->
   {error, reopen_in_append_mode};
 
-append(Event, #dbstate{next_chunk_time = NCT, file = File, last_md = LastMD, sync = Sync} = State) ->
+append(Event, #db{next_chunk_time = NCT, file = File, last_md = LastMD, sync = Sync} = State) ->
   {Type, Timestamp} = validate_event(Event),
   if
     (Timestamp >= NCT orelse NCT == undefined) ->
@@ -133,47 +133,43 @@ append_first_event(Event, State) when is_record(Event, md) ->
   append_full_md(Event, State);
 
 append_first_event(Event, State) when is_record(Event, trade) ->
-  append_trade(Event, State#dbstate{last_md = undefined}).
+  append_trade(Event, State#db{last_md = undefined}).
 
 
-write_header(File, #dbstate{chunk_size = CS, date = Date, depth = Depth, scale = Scale, stock = Stock, version = Version,
+write_header(File, #db{chunk_size = CS, date = Date, depth = Depth, scale = Scale, symbol = Symbol, version = Version,
   have_candle = HaveCandle}) ->
-  StockDBOpts = [{chunk_size,CS},{date,Date},{depth,Depth},{scale,Scale},{stock,Stock},{version,Version},{have_candle,HaveCandle}],
+  SymbolDBOpts = [{chunk_size,CS},{date,Date},{depth,Depth},{scale,Scale},{symbol,Symbol},{version,Version},{have_candle,HaveCandle}],
   {ok, 0} = file:position(File, 0),
-  ok = file:write(File, <<"#!/usr/bin/env stockdb\n">>),
+  ok = file:write(File, <<"#!/usr/bin/env secdb\n">>),
   lists:foreach(fun
     ({have_candle,false}) ->
       ok;
     ({Key, Value}) ->
-      ok = file:write(File, [io_lib:print(Key), ": ", stockdb_format:format_header_value(Key, Value), "\n"])
-    end, StockDBOpts),
+      ok = file:write(File, [io_lib:print(Key), ": ", secdb_format:format_header_value(Key, Value), "\n"])
+    end, SymbolDBOpts),
   ok = file:write(File, "\n"),
   file:position(File, cur).
 
 
-write_candle(File, #dbstate{have_candle = true}) ->
+write_candle(File, #db{have_candle = true}) ->
   file:write(File, <<0:32, 0:32, 0:32, 0:32>>),
   file:position(File, cur);
 
-write_candle(File, #dbstate{have_candle = false}) ->
+write_candle(File, #db{have_candle = false}) ->
   file:position(File, cur).
 
-write_chunk_map(File, #dbstate{chunk_size = ChunkSize}) ->
+write_chunkmap(File, #db{chunk_size = ChunkSize}) ->
   ChunkCount = ?NUMBER_OF_CHUNKS(ChunkSize),
-
-  ChunkMap = [<<0:?OFFSETLEN>> || _ <- lists:seq(1, ChunkCount)],
-  Size = ?OFFSETLEN * ChunkCount,
-
-  ok = file:write(File, ChunkMap),
-  {ok, Size}.
+  BitSize    = ChunkCount * ?OFFSETLEN_BITS,
+  ChunkMap   = <<0:BitSize>>,
+  {ok = file:write(File, ChunkMap), BitSize}.
 
 
+start_chunk(Timestamp, Offset, #db{daystart = undefined, date = Date} = State) ->
+  start_chunk(Timestamp, Offset, State#db{daystart = daystart(Date)});
 
-start_chunk(Timestamp, Offset, #dbstate{daystart = undefined, date = Date} = State) ->
-  start_chunk(Timestamp, Offset, State#dbstate{daystart = daystart(Date)});
-
-start_chunk(Timestamp, Offset, #dbstate{daystart = Daystart, chunk_size = ChunkSize,
-    chunk_map = ChunkMap} = State) ->
+start_chunk(Timestamp, Offset, #db{daystart = Daystart, chunk_size = ChunkSize,
+    chunkmap = ChunkMap} = State) ->
 
   ChunkSizeMs = timer:seconds(ChunkSize),
   ChunkNumber = (Timestamp - Daystart) div ChunkSizeMs,
@@ -188,58 +184,57 @@ start_chunk(Timestamp, Offset, #dbstate{daystart = Daystart, chunk_size = ChunkS
 
   Chunk = {ChunkNumber, Timestamp, ChunkOffset},
   % ?D({new_chunk, Chunk}),
-  State1 = State#dbstate{
-    chunk_map = ChunkMap ++ [Chunk],
+  State1 = State#db{
+    chunkmap = ChunkMap ++ [Chunk],
     next_chunk_time = NextChunkTime},
   write_candle(State1),
   {ok, State1}.
 
 
-write_candle(#dbstate{have_candle = false}) ->  ok;
-write_candle(#dbstate{candle = undefined}) -> ok;
-write_candle(#dbstate{have_candle = true, candle_offset = CandleOffset, candle = {O,H,L,C}, file = File}) ->
+write_candle(#db{have_candle = false}) ->  ok;
+write_candle(#db{candle = undefined}) -> ok;
+write_candle(#db{have_candle = true, candle_offset = CandleOffset, candle = {O,H,L,C}, file = File}) ->
   ok = file:pwrite(File, CandleOffset, <<1:1, O:31, H:32, L:32, C:32>>).
 
 
 
-current_chunk_offset(Offset, #dbstate{chunk_map_offset = ChunkMapOffset} = _State) ->
+current_chunk_offset(Offset, #db{chunkmap_offset = ChunkMapOffset} = _State) ->
   Offset - ChunkMapOffset.
 
-write_chunk_offset(ChunkNumber, ChunkOffset, #dbstate{file = File, chunk_map_offset = ChunkMapOffset} = _State) ->
-  ByteOffsetLen = ?OFFSETLEN div 8,
-  ok = file:pwrite(File, ChunkMapOffset + ChunkNumber*ByteOffsetLen, <<ChunkOffset:?OFFSETLEN/integer>>).
+write_chunk_offset(ChunkNum, ChunkOffset, #db{file = F, chunkmap_offset = CMOffset} = _State) ->
+  ok = file:pwrite(F, CMOffset + ChunkNum * ?OFFSETLEN_BYTES, <<ChunkOffset:?OFFSETLEN_BITS/integer>>).
 
 
-append_full_md(#md{timestamp = Timestamp} = MD, #dbstate{depth = Depth, file = File, scale = Scale} = State) ->
+append_full_md(#md{timestamp = Timestamp} = MD, #db{depth = Depth, file = File, scale = Scale} = State) ->
   DepthSetMD = setdepth(MD, Depth),
-  Data = stockdb_format:encode_full_md(DepthSetMD, Scale),
+  Data = secdb_format:encode_full_md(DepthSetMD, Scale),
   {ok, _EOF} = file:position(File, eof),
   ok = file:write(File, Data),
-  {ok, State#dbstate{
+  {ok, State#db{
       last_timestamp = Timestamp,
       last_md = DepthSetMD}
   }.
 
-append_delta_md(#md{timestamp = Timestamp} = MD, #dbstate{depth = Depth, file = File, last_md = LastMD, scale = Scale} = State) ->
+append_delta_md(#md{timestamp = Timestamp} = MD, #db{depth = Depth, file = File, last_md = LastMD, scale = Scale} = State) ->
   DepthSetMD = setdepth(MD, Depth),
-  Data = stockdb_format:encode_delta_md(DepthSetMD, LastMD, Scale),
+  Data = secdb_format:encode_delta_md(DepthSetMD, LastMD, Scale),
   {ok, _EOF} = file:position(File, eof),
   ok = file:write(File, Data),
-  {ok, State#dbstate{
+  {ok, State#db{
       last_timestamp = Timestamp,
       last_md = DepthSetMD}
   }.
 
 append_trade(#trade{timestamp = Timestamp, price = Price} = Trade, 
-  #dbstate{file = File, scale = Scale, candle = Candle, have_candle = HaveCandle} = State) ->
-  Data = stockdb_format:encode_trade(Trade, Scale),
+  #db{file = File, scale = Scale, candle = Candle, have_candle = HaveCandle} = State) ->
+  Data = secdb_format:encode_trade(Trade, Scale),
   {ok, _EOF} = file:position(File, eof),
   ok = file:write(File, Data),
   Candle1 = case HaveCandle of
     true -> candle(Candle, round(Price*Scale));
     false -> Candle
   end,
-  {ok, State#dbstate{last_timestamp = Timestamp, candle = Candle1}}.
+  {ok, State#db{last_timestamp = Timestamp, candle = Candle1}}.
 
 
 setdepth(#md{bid = Bid, ask = Ask} = MD, Depth) ->
