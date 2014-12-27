@@ -43,11 +43,8 @@
 
 %% @doc Initialize iterator. Position at the very beginning of data
 init(#db{} = DBState) ->
-  DataStart = first_chunk_offset(DBState),
-  {ok, #iterator{
-      db = DBState,
-      data_start = DataStart,
-      position = DataStart}}.
+  {Offset, State} = first_chunk_offset(DBState),
+  {ok, #iterator{db = State, data_start = Offset, position = Offset}}.
 
 %% @doc Filter source iterator, expposing same API as usual iterator
 filter(Source, FilterFun) ->
@@ -71,26 +68,26 @@ restore_last_state(Iterator) ->
 
 
 %% @doc get start of first chunk
-first_chunk_offset(#db{chunkmap = []} = _DBstate) ->
-  % Empty chunk map -> offset undefined
-  undefined;
-first_chunk_offset(#db{chunkmap = [{_N, _T, Offset}|_Rest]} = _DBstate) ->
-  % Just return offset from first chunk
-  Offset.
+first_chunk_offset(#db{chunkmap = ChunkMap} = _DBstate) ->
+  case secdb_cm:pop(ChunkMap) of
+    {{_N, _T, Offset}, CM} -> {Offset,    CM};  % Return offset from first chunk
+    {undefined,        CM} -> {undefined, CM}   % Empty chunk map -> offset undefined
+  end.
 
 %% @doc Set position to given time
-seek_utc(Time, #iterator{data_start = DataStart, db = #db{chunkmap = ChunkMap, date = Date}} = Iterator) ->
+seek_utc(Time, #iterator{data_start = DataStart, db = #db{chunkmap = CM, date = Date} = DB} = It) ->
   UTC = time_to_utc(Time, Date),
+  {ChunkMap, NormalCM} = secdb_cm:normalize(CM),
   ChunksBefore = case UTC of
-    undefined -> [];
-    eof -> ChunkMap;
+    undefined                -> [];
+    eof                      -> CM;
     Int when is_integer(Int) -> lists:takewhile(fun({_N, T, _O}) -> T =< UTC end, ChunkMap)
   end,
   {_N, _T, ChunkOffset} = case ChunksBefore of
-    [] -> {-1, -1, DataStart};
+    []    -> {-1, -1, DataStart};
     [_|_] -> lists:last(ChunksBefore)
   end,
-  seek_until(UTC, Iterator#iterator{position = ChunkOffset});
+  seek_until(UTC, It#iterator{db = DB#db{chunkmap = NormalCM}, position = ChunkOffset});
 
 seek_utc(UTC, #filter{source = Source} = Filter) ->
   % For filter, seek in underlying source

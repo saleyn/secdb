@@ -11,9 +11,12 @@
 
 % Open DB, read its contents and close,
 % returning self-sufficient state
--export([open/1, open_for_migrate/1, open_existing_db/2]).
+-export([open/1, open/2, open_for_migrate/1, open_existing_db/2]).
 
 -export([file_info/1, file_info/2]).
+
+open(Symbol, Date) ->
+  open(secdb_fs:path(Symbol, Date)).
 
 open(Path) ->
   case filelib:is_regular(Path) of
@@ -37,27 +40,28 @@ open_existing_db(Path, Modes) ->
     case lists:member(write, Modes) of
       % Try accelerated read with emmap
       false -> emmap:open(Path, [read, shared, direct, nolock]);
-      true -> file:open(Path, Modes -- [migrate])
+      true  -> file:open(Path, Modes -- [migrate])
     end
   catch
     error:undef ->
       % Fallback to file module
+      ?debugFmt("open_existing_db: fallback to file:open/2", []),
       file:open(Path, Modes -- [migrate])
   end,
   {ok, 0} = file:position(File, bof),
 
   {ok, SavedDBOpts, AfterHeaderOffset} = read_header(File),
 
-  {version, Version} = lists:keyfind(version, 1, SavedDBOpts),
-  {symbol, Symbol} = lists:keyfind(symbol, 1, SavedDBOpts),
-  {date, Date} = lists:keyfind(date, 1, SavedDBOpts),
-  {scale, Scale} = lists:keyfind(scale, 1, SavedDBOpts),
-  {depth, Depth} = lists:keyfind(depth, 1, SavedDBOpts),
-  {chunk_size, ChunkSize} = lists:keyfind(chunk_size, 1, SavedDBOpts),
+  {version,   Version}   = lists:keyfind(version,   1, SavedDBOpts),
+  {symbol,    Symbol}    = lists:keyfind(symbol,    1, SavedDBOpts),
+  {date,      Date}      = lists:keyfind(date,      1, SavedDBOpts),
+  {scale,     Scale}     = lists:keyfind(scale,     1, SavedDBOpts),
+  {depth,     Depth}     = lists:keyfind(depth,     1, SavedDBOpts),
+  {chunk_size,ChunkSize} = lists:keyfind(chunk_size,1, SavedDBOpts),
   HaveCandle = proplists:get_value(have_candle, SavedDBOpts, false),
 
   {CandleOffset, ChunkMapOffset} = case HaveCandle of
-    true -> {AfterHeaderOffset, AfterHeaderOffset + 4*4};
+    true  -> {AfterHeaderOffset, AfterHeaderOffset + 4*4};
     false -> {undefined, AfterHeaderOffset}
   end,
   
@@ -89,8 +93,6 @@ open_existing_db(Path, Modes) ->
           erlang:error({need_to_migrate, Path})
       end
   end.
-
-
 
 %% @doc read data from chunk map start to EOF
 buffer_data(#db{file = File, chunkmap_offset = ChunkMapOffset} = State) ->
@@ -223,7 +225,7 @@ read_candle(File, CandleOffset, Scale) ->
 %% @doc Read chunk map and validate corresponding timestamps.
 %% Result is saved to state
 read_chunkmap(#db{} = State) ->
-  State#db{chunkmap = read_nonzero_chunks(true, State)}.
+  State#db{chunkmap = secdb_cm:new(read_nonzero_chunks(true, State))}.
 
 %% @doc Read raw chunk map and return {Number, Offset} list for chunks containing data
 read_nonzero_chunks(LookupTS, #db{file = File, chunk_size = ChunkSize, chunkmap_offset = CMOffset}) ->
@@ -234,16 +236,16 @@ read_nonzero_chunks(LookupTS, #db{file = File, chunk_size = ChunkSize, chunkmap_
       case Bin of
         _ when byte_size(Bin) =:= NN ->  %% Reached the end of the offset list
           lists:reverse(Acc);
-        <<_:NN/binary, Offset/unsigned, _/binary>> when Offset =/= 0 ->
+        <<_:NN/binary, Offset:32/unsigned, _/binary>> when Offset =/= 0 ->
           if LookupTS ->
             {ok, Header} = file:pread(File, CMOffset + Offset, 8),
             Timestamp    = secdb_format:get_timestamp(Header),
-            Process(Bin, N+1, NN+2, [{N, Timestamp, Offset} | Acc]);
+            Process(Bin, N+1, NN+2*?OFFSETLEN_BYTES, [{N, Timestamp, Offset} | Acc]);
           true ->
-            Process(Bin, N+1, NN+2, [{N, Offset} | Acc])
+            Process(Bin, N+1, NN+2*?OFFSETLEN_BYTES, [{N, Offset} | Acc])
           end;
         _ ->
-          Process(Bin, N+1, NN+2, Acc)
+          Process(Bin, N+1, NN+2*?OFFSETLEN_BYTES, Acc)
       end
     end,
   Fun(ChunkMap, 0, 0, []).

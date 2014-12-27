@@ -8,7 +8,7 @@
 -export([validate/1]).
 
 
-validate(#db{path = Path, chunkmap = [], chunkmap_offset = ChunkMapOffset, chunk_size = ChunkSize} = State) ->
+validate(#db{path = Path, chunkmap = #cm{h=[],t=[]}, chunkmap_offset = ChunkMapOffset, chunk_size = ChunkSize} = State) ->
   ChunkCount = ?NUMBER_OF_CHUNKS(ChunkSize),
   ChunkMapSize = ChunkCount*?OFFSETLEN_BITS div 8,
   GoodFileSize = ChunkMapOffset + ChunkMapSize,
@@ -27,9 +27,8 @@ validate(#db{path = Path, chunkmap = [], chunkmap_offset = ChunkMapOffset, chunk
       State
   end;
   
-
-validate(#db{path = Path, file = File, chunkmap = ChunkMap, chunkmap_offset = ChunkMapOffset, chunk_size = ChunkSize} = State) ->
-  {Number, Timestamp, Offset} = lists:last(ChunkMap),
+validate(#db{path = Path, file = File, chunkmap = ChunkMap = #cm{}, chunkmap_offset = ChunkMapOffset, chunk_size = ChunkSize} = State) ->
+  {Number, Timestamp, Offset} = secdb_cm:last(ChunkMap),
   {ok, #file_info{size = Size}} = file:read_file_info(Path),
   AbsOffset = ChunkMapOffset + Offset,
   {ok, LastChunk} = file:pread(File, AbsOffset, Size),

@@ -225,7 +225,6 @@ APP_VSN_GIT ?= sed 's/^[^0-9\.]*//' <<< \
 	$$(git describe --tags --abbrev=0 2>/dev/null || \
 	printf "%s.%s\n" $$(git rev-list --count HEAD) $$(git rev-parse --short HEAD))
 
-APP_MODULES  := $(shell find ebin -type f -name \*.beam | sed -e "s/ebin\//'/;s/\.beam/',/" -e '$$s/.$$//')
 
 # Verbosity.
 
@@ -247,7 +246,12 @@ mkdir_verbose = $(mkdir_verbose_$(V))
 
 # Core targets.
 
+$(ERL_APP_FILE):: ebin
+
 app:: erlc-include $(ERL_APP_FILE)
+	@[ ! -d ebin ] && mkdir -p ebin || true
+	$(eval APP_MODULES := $(shell find ebin -type f -name \*.beam | sed -e \
+            "s/ebin\//'/;s/\.beam/',/" -e '$$s/.$$//'))
 	@if [ -z "$$(grep -E '^[^%]*{modules,' $(ERL_APP_SRC))" ]; then \
 		echo "Empty modules entry not found in $(ERL_APP_SRC). Please consult the erlang.mk README for instructions." >&2; \
 		exit 1; \
@@ -258,6 +262,8 @@ app:: erlc-include $(ERL_APP_FILE)
 		echo " APP   Force rejenerate $(ERL_APP_FILE)" && touch $(ERL_APP_SRC) || true
 
 $(ERL_APP_FILE):: $(ERL_APP_SRC)
+	$(eval APP_MODULES := $(shell find ebin -type f -name \*.beam | sed -e \
+            "s/ebin\//'/;s/\.beam/',/" -e '$$s/.$$//'))
 	$(appsrc_verbose) sed \
 	    -e "s/{modules,[[:space:]]*\[\]}/{modules, \[$(APP_MODULES)\]}/" \
 	    -e 's/{id,[[:space:]]*"git"}/{id, "$(shell $(APP_ID_GIT))"}/' \
@@ -283,7 +289,6 @@ define compile_mib
 endef
 
 ifneq ($(wildcard src/),)
-ebin/$(PROJECT).app:: ebin
 
 ifneq ($(wildcard mibs/),)
 ebin/$(PROJECT).app:: $(shell find mibs -type f -name \*.mib)

@@ -1,10 +1,10 @@
-#include "stockdb_api.hpp"
+#include "secdb_api.hpp"
 
 using namespace std;
-using namespace stockdb;
+using namespace secdb;
 
 void usage(const char* program) {
-  cerr << "Dump content of stockdb database file\n\n"
+  cerr << "Dump content of secdb database file\n\n"
        << "Usage: " << program << " -f Filename [-v [Level]] [-b Size]\n\n"
        << "  -f Filename  - read the Filename\n"
        << "  -v [Level]   - giving -v -vv -vvv or Level gives verbose output\n"
@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
   DBState state(filename, verbose);
 
   //std::vector<unsigned char> data(buf_size);
-  //stockdb::BitReader reader(depth);
+  //secdb::BitReader reader(depth);
 
   return 0;
 }

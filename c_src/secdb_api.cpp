@@ -1,11 +1,11 @@
 // vim:ts=2:sw=2:et
-#include "stockdb_api.hpp"
+#include "secdb_api.hpp"
 #include <assert.h>
 
 // LEB128 decoding, see:
 // http://llvm.org/docs/doxygen/html/LEB128_8h_source.html
 
-namespace stockdb {
+namespace secdb {
 
   //----------------------------------------------------------------------------
   BitReader::tuple<uint64_t>
@@ -297,7 +297,7 @@ namespace stockdb {
     // Stockdb file header:
     // ====================
     //
-    // #!/usr/bin/env stockdb
+    // #!/usr/bin/env secdb
     // chunk_size: 300
     // date: 2012-01-15
     // depth: 2
@@ -309,7 +309,7 @@ namespace stockdb {
     char date_str[80], symbol[64], cndle[20];
 
     int  n = sscanf(m_mem,
-      "#!/usr/bin/env stockdb\n"
+      "#!/usr/bin/env secdb\n"
       "chunk_size: %d\n"
       "date: %s\n"
       "depth: %d\n"
@@ -490,4 +490,4 @@ namespace stockdb {
     offset(pos);            // Restore old pointer
   }
 
-} // namespace stockdb
+} // namespace secdb

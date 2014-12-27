@@ -20,8 +20,10 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-namespace stockdb {
+namespace secdb {
   using namespace std;
+
+  using Symbol = std::string;
 
   //----------------------------------------------------------------------------
   /// Quote class containing qty and price data
@@ -83,19 +85,19 @@ namespace stockdb {
   /// Price level of an order book
   //----------------------------------------------------------------------------
   template <class QuoteT>
-  class PriceLevel {
+  class BasicPriceLevel {
     QuoteT m_bid;
     QuoteT m_ask;
   public:
-    PriceLevel() {}
-    PriceLevel(const QuoteT& a_bid, const Quote& a_ask)
+    BasicPriceLevel() {}
+    BasicPriceLevel(const QuoteT& a_bid, const Quote& a_ask)
       : m_bid(a_bid),  m_ask(a_ask) {}
-    PriceLevel(QuoteT&& a_bid, QuoteT&& a_ask)
+    BasicPriceLevel(QuoteT&& a_bid, QuoteT&& a_ask)
       : m_bid(std::move(a_bid)), m_ask(std::move(a_ask)) {}
-    PriceLevel(const PriceLevel&)            = default;
-    PriceLevel(PriceLevel&&)                 = default;
-    PriceLevel& operator=(PriceLevel&&)      = default;
-    PriceLevel& operator=(const PriceLevel&) = default;
+    BasicPriceLevel(const BasicPriceLevel&)            = default;
+    BasicPriceLevel(BasicPriceLevel&&)                 = default;
+    BasicPriceLevel& operator=(BasicPriceLevel&&)      = default;
+    BasicPriceLevel& operator=(const BasicPriceLevel&) = default;
 
     QuoteT const& bid() const { return m_bid; }
     QuoteT const& ask() const { return m_ask; }
@@ -103,70 +105,91 @@ namespace stockdb {
     QuoteT&       ask()       { return m_ask; }
   };
 
+  using PriceLevel   = BasicPriceLevel<Quote>;
+  using PriceLevelEx = BasicPriceLevel<QuoteEx>;
+
   //----------------------------------------------------------------------------
   // Trade detail
   //----------------------------------------------------------------------------
-  class Trade {
-    long  m_timestamp;
-    int   m_qty;
-    float m_price;
-  public:
+  struct Trade {
     Trade() {}
     Trade(const Trade&)            = default;
     Trade(Trade&&)                 = default;
     Trade& operator=(Trade&&)      = default;
     Trade& operator=(const Trade&) = default;
 
-    Trade(long a_time, int a_qty, float a_px)
-      : m_timestamp(a_time), m_qty(a_qty), m_price(a_px)
+    enum Aggressor { UNDEFINED = 0, PASSIVE = 1, AGGRESSIVE = 2 };
+
+    Trade(long a_time, int a_qty, float a_px, Aggressor a_aggr = UNDEFINED)
+      : m_timestamp(a_time), m_qty(a_qty), m_price(a_px), m_aggressor(a_aggr)
     {}
 
-    long timestamp()  const { return m_timestamp; }
-    long qty()        const { return m_qty;       }
-    long price()      const { return m_price;     }
+    long      timestamp()  const { return m_timestamp; }
+    long      qty()        const { return m_qty;       }
+    long      price()      const { return m_price;     }
+    Aggressor aggressor()  const { return m_aggressor; }
 
-    void set(long a_time, int a_qty, float a_px) {
+    void set(long a_time, int a_qty, float a_px, Aggressor a_aggr) {
       m_timestamp = a_time;
       m_qty       = a_qty;
       m_price     = a_px;
+      m_aggressor = a_aggr;
     }
+
+  private:
+    long      m_timestamp;
+    int       m_qty;
+    float     m_price;
+    Aggressor m_aggressor;
   };
 
   //----------------------------------------------------------------------------
   // Market data snapshot
   //----------------------------------------------------------------------------
   template <class LevelT>
-  class MktData {
+  class BasicMDSnapshot {
     long                 m_timestamp;
     std::vector<LevelT>  m_levels;  // bid levels
   public:
     using iterator       = typename std::vector<LevelT>::iterator;
     using const_iterator = typename std::vector<LevelT>::const_iterator;
 
-    MktData(size_t a_depth) : m_timestamp(0), m_levels(a_depth) {}
-    MktData(const MktData& a_rhs)
+    BasicMktData(size_t a_depth) : m_timestamp(0), m_levels(a_depth) {}
+    BasicMktData(const BasicMktData& a_rhs)
       : m_timestamp(a_rhs.timestamp())
       , m_levels(a_rhs.m_levels)
     {}
 
-    long timestamp()       const { return m_timestamp; }
-    void timestamp(long ts)      { m_timestamp = ts;   }
+    long timestamp()       const { return m_timestamp;       }
+    void timestamp(long ts)      { m_timestamp = ts;         }
 
     LevelT&       operator[] (unsigned a_lev)       { return m_levels[a_lev]; }
     LevelT const& operator[] (unsigned a_lev) const { return m_levels[a_lev]; }
 
-    size_t depth()       const { return m_levels.size();   }
-    void depth(size_t a_depth) { m_levels.resize(a_depth); }
+    size_t depth()         const { return m_levels.size();   }
+    void depth(size_t a_depth)   { m_levels.resize(a_depth); }
 
-    iterator        begin()    { return m_levels.begin();  }
-    iterator        end()      { return m_levels.end();    }
+    iterator        begin()      { return m_levels.begin();  }
+    iterator        end()        { return m_levels.end();    }
 
-    const_iterator  cbegin()   { return m_levels.cbegin(); }
-    const_iterator  cend()     { return m_levels.cend();   }
+    const_iterator  cbegin()     { return m_levels.cbegin(); }
+    const_iterator  cend()       { return m_levels.cend();   }
   };
 
+  using MDSnapshot   = BasicMDSnapshot<PriceLevel>;
+  using MDSnapshotEx = BasicMDSnapshot<PriceLevelEx>;
+
+  // Type of record
+  enum class RecordT {
+    UNDEFINED,
+    MDS,            // MD Full Snapshot
+    MDS_DLT,        // MD Delta Snapshot
+    TRADE
+  };
+
+
   //----------------------------------------------------------------------------
-  /// BitReader class for reading stockdb data
+  /// BitReader class for reading secdb data
   //----------------------------------------------------------------------------
   class BitReader {
     template <typename T>
@@ -183,19 +206,11 @@ namespace stockdb {
     };
 
   public:
-    using Level = PriceLevel<QuoteEx>;
-
-    // Type of record
-    enum rec_type {
-      UNDEFINED,
-      MKT_DATA,
-      MKT_DATA_DLT,
-      TRADE
-    };
+    using Level = BasicPriceLevel<QuoteEx>;
 
     BitReader(size_t a_depth)
       : m_bytes(nullptr), m_size(0), m_offset(0)
-      , m_rec_type(UNDEFINED)
+      , m_rec_type(RecordT::UNDEFINED)
       , m_mkt_data(a_depth)
     {}
 
@@ -217,7 +232,7 @@ namespace stockdb {
     //--------------------------------------------------------------------------
     /// Read next record
     //--------------------------------------------------------------------------
-    std::tuple<rec_type, size_t, const char*> read_next(bool a_append_delta);
+    std::tuple<RecordT, size_t, const char*> read_next(bool a_append_delta);
 
   private:
     unsigned char*       m_bytes;
@@ -226,9 +241,9 @@ namespace stockdb {
 
     int                  m_scale;
 
-    rec_type             m_rec_type;
+    RecordT             m_rec_type;
     Trade                m_trade;
-    MktData<Level>       m_mkt_data;
+    BasicMktData<Level>  m_mkt_data;
 
     int                  m_full_md_rec_size;
 
@@ -272,7 +287,7 @@ namespace stockdb {
     const char*     decode_delta
       (bool append, bool has_value, int& old, const char* reason);
 
-    std::pair<rec_type, const char*> read_rec_type();
+    std::pair<RecordT, const char*>  read_RecordT();
     std::pair<int, const char*>      read_trade();
 
     /// @param a_append if true and current record type is market data delta,
@@ -369,13 +384,15 @@ namespace stockdb {
     static const int OFFSETLEN_BITS = 4; // in bytes
 
     DBState();
-    DBState(const std::string& a_filename, int a_verbose);
+    DBState(const YMSymbol& a_sym);
     ~DBState();
 
     int          file           () const { return m_file           ;      }
     int          version        () const { return m_version        ;      }
     std::string  symbol         () const { return m_symbol         ;      }
     time_t       date           () const { return m_date           ;      }
+    int          year           () const { return m_year           ;      }
+    int          month          () const { return m_month          ;      }
     int          depth          () const { return m_depth          ;      }
     int          scale          () const { return m_scale          ;      }
     int          chunk_size     () const { return m_chunk_size     ;      }
@@ -408,6 +425,8 @@ namespace stockdb {
     int               m_version;
     std::string       m_symbol;
     time_t            m_date;
+    time_t            m_year;
+    time_t            m_month;
     int               m_depth;
     int               m_scale;
     int               m_chunk_size;
@@ -443,4 +462,4 @@ namespace stockdb {
     //--------------------------------------------------------------------------
     void remap(size_t a_size);
   };
-} // namespace stockdb
+} // namespace secdb

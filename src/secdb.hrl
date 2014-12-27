@@ -1,3 +1,4 @@
+-record(cm, {h = [] :: list(), t = [] :: list()}).
 
 -record(db, {
     version,
@@ -21,10 +22,10 @@
     last_timestamp  = 0 :: integer(),
     last_bidask,
     next_chunk_time = 0,
-    chunkmap        = []
+    chunkmap        = #cm{}
 }).
 
--define(SECDB_VERSION, 2).
+-define(SECDB_VERSION, 100).
 -define(DAY_USECS, 86400*1000000).          %% Microseconds in a day
 
 -define(SECDB_OPTIONS, [
@@ -40,7 +41,7 @@
 -define(OFFSETLEN_BYTES, 4).
 -define(OFFSETLEN_BITS,  32).
 
--define(NUMBER_OF_CHUNKS(ChunkSize), (24*3600 div ChunkSize)*1000000 + 1).
+-define(NUMBER_OF_CHUNKS(ChunkSize), (24*3600 div ChunkSize)*1000 + 1).
 
 
 -define(assertEqualEps(Expect, Expr, Eps),

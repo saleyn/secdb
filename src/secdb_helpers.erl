@@ -58,8 +58,8 @@ timestamp({Megaseconds, Seconds, Microseconds}) ->
 
 
 date_time(Timestamp) ->
-  GregSeconds_Zero = calendar:datetime_to_gregorian_seconds({{1970,1,1}, {0,0,0}}),
-  GregSeconds = GregSeconds_Zero + Timestamp div 1000,
+  Epoch = calendar:datetime_to_gregorian_seconds({{1970,1,1}, {0,0,0}}),
+  GregSeconds = Epoch + Timestamp div 1000,
   calendar:gregorian_seconds_to_datetime(GregSeconds).
 
 

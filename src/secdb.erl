@@ -44,7 +44,7 @@
 -export([init_reader/2, init_reader/3, read_event/1]).
 
 %% Shortcut helpers
--export([timestamp/1, candle/2, candle/3]).
+-export([timestamp/0, timestamp/1, candle/2, candle/3]).
 
 %% Run tests
 -export([run_tests/0]).
@@ -79,12 +79,13 @@ common_dates(Storage, Symbols) -> secdb_fs:common_dates(Storage, Symbols).
 %% @doc Open symbol for reading
 -spec open_read(symbol()|{any(),symbol()}, date()) -> {ok, secdb()} | {error, Reason::term()}.  
 open_read(Symbol, Date) ->
-  secdb_reader:open(secdb_fs:path(Symbol, Date)).
+  secdb_reader:open(Symbol, Date).
 
 %% @doc Open symbol for appending
 -spec open_append(symbol(), date(), [open_option()]) -> {ok, secdb()} | {error, Reason::term()}.  
-open_append(Symbol, Date, Opts) ->
-  Path = secdb_fs:path(Symbol, Date),
+open_append(Symbol, Date, Opts) when is_list(Opts) ->
+  Path = secdb_fs:path(Symbol, Date, create),
+  io:format("Path: ~p\n", [Path]),
   {db, RealSymbol, RealDate} = secdb_fs:file_info(Path),
   secdb_appender:open(Path, [{symbol,RealSymbol},{date,secdb_fs:parse_date(RealDate)}|Opts]).
 
@@ -220,6 +221,9 @@ candle(Symbol, Date, Options) ->
 -spec timestamp(calendar:datetime()|datetime_ms()|erlang:timestamp()) -> timestamp().
 timestamp(DateTime) ->
   secdb_helpers:timestamp(DateTime).
+
+timestamp() ->
+  secdb_helpers:timestamp(now()).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %       Configuration

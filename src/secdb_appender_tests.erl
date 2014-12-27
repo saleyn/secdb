@@ -1,19 +1,22 @@
 -module(secdb_appender_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include("../include/secdb.hrl").
+
+-export([append_bm_test/2]).
 
 -import(secdb_test_helper, [tempfile/1, tempdir/0, fixturefile/1, ensure_states_equal/2, write_events_to_file/2, append_events_to_file/2, ensure_packets_equal/2, chunk_content/1]).
 
 
 file_create_test() ->
   check_creation_params([{symbol, 'TEST'}, {date, {2012,7,26}}, {depth, 10}, {scale, 100}, {chunk_size, 300}],
-    "TEST-20120726.300.10.100.symbol"),
+    "TEST-20120726.300.10.100.secdb"),
   check_creation_params([{symbol, 'TEST'}, {date, {2012,7,25}}, {depth, 15}, {scale, 200}, {chunk_size, 600}],
-    "TEST-20120725.600.15.200.symbol").
+    "TEST-20120725.600.15.200.secdb").
 
 check_creation_params(DBOptions, FixtureFile) ->
   File = tempfile("creation-test.temp"),
   file:delete(File),
-  % ok = filelib:ensure_dir(File),
+  ok = filelib:ensure_dir(File),
   % ok = file:write_file(File, "GARBAGE"),
 
   {ok, S} = secdb_appender:open(File, DBOptions),
@@ -29,7 +32,7 @@ db_no_regress(OldFile, NewFile) ->
 append_typed_symbol_test() ->
   application:load(secdb),
   application:set_env(secdb, root, tempdir()),
-  Path = tempdir() ++ "/daily/TEST-2012-07-25.symbol",
+  Path = tempdir() ++ "/daily/TEST.2012-07-25.secdb",
   file:delete(Path),
   {ok, DB} = secdb:open_append({daily, 'TEST'}, "2012-07-25", [{depth,3}]),
   Info = secdb:info(DB),
@@ -38,21 +41,23 @@ append_typed_symbol_test() ->
   ok.
 
 append_bm_test() ->
+  append_bm_test(10000, {2012, 7, 25}).
+
+append_bm_test(Count, Date) ->
   File = tempfile("append-bm-test.temp"),
   ok = filelib:ensure_dir(File),
   file:delete(File),
 
-  Count = 80000,
-  Date = {2012,7,25},
   StartTS = (calendar:datetime_to_gregorian_seconds({Date,{6,0,0}}) - calendar:datetime_to_gregorian_seconds({{1970,1,1}, {0,0,0}}))*1000,
   {ok, S0} = secdb_appender:open(File, [nosync, {symbol, 'TEST'},{date, Date}, {depth, 1}, {scale, 100}]),
   T1 = erlang:now(),
   S1 = fill_records(S0, Count, 10, StartTS),
   T2 = erlang:now(),
   secdb_appender:close(S1),
-  file:delete(File),
   Delta = timer:now_diff(T2,T1),
-  ?debugFmt("Append benchmark: ~B in ~B ms, about ~B us per row", [Count, Delta div 1000, Delta div Count]),
+  ?debugFmt("Append benchmark: ~B in ~B ms, about ~B us per row (file size=~.1f MB)",
+    [Count, Delta div 1000, Delta div Count, filelib:file_size(File) / (1024*1024)]),
+  file:delete(File),
   ok.
 
 fill_records(S0, Count, _, _) when Count =< 0 ->
@@ -125,9 +130,9 @@ append_verifier_test() ->
 
   {ok, S0} = secdb_appender:open(File, [{symbol, 'TEST'}, {date, {2012,7,25}}, {depth, 3}, {scale, 200}, {chunk_size, 300}]),
 
-  ?assertThrow({_, bad_timestamp, _}, secdb_appender:append({trade, undefined, 2.34, 29}, S0)),
-  ?assertThrow({_, bad_price, _}, secdb_appender:append({trade, 1350575093098, undefined, 29}, S0)),
-  ?assertThrow({_, bad_volume, _}, secdb_appender:append({trade, 1350575093098, 2.34, -29}, S0)),
+  ?assertThrow({_, bad_timestamp, _}, secdb_appender:append(#trade{price=2.34, volume=29}, S0)),
+  ?assertThrow({_, bad_price, _}, secdb_appender:append(#trade{timestamp=1350575093098, volume=29}, S0)),
+  ?assertThrow({_, bad_volume, _}, secdb_appender:append(#trade{timestamp=1350575093098, price=2.34, volume=-29}, S0)),
 
   ?assertThrow({_, bad_timestamp, _}, secdb_appender:append({md, undefined, [{2.34, 29}], [{2.35, 31}]}, S0)),
   ?assertThrow({_, bad_bid, _}, secdb_appender:append({md, 1350575093098, [], [{2.35, 31}]}, S0)),
