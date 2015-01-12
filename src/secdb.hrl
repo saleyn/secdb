@@ -1,32 +1,34 @@
 -record(cm, {h = [] :: list(), t = [] :: list()}).
 
+% Database state record
 -record(db, {
     version,
     sync = true,
     file,
     path,
-    mode                :: read|append,
+    mode                  :: read|append,
     buffer,
     buffer_end,
     symbol,
-    date                :: calendar:date(), %% UTC date
+    date                  :: calendar:date(), %% UTC date
     depth,
     scale,
-    chunk_size,                             %% Number of seconds in a chunk
-    have_candle = false :: boolean(),
-    candle_offset,
-    chunkmap_offset,
-    candle = undefined,
-    daystart            :: integer(),
-    last_md,
-    last_timestamp  = 0 :: integer(),
-    last_bidask,
+    window_sec,                               %% Number of seconds in a chunk
+    cur_chunk_num = 0     :: integer(),       %% Current chunk number
+    daycandle_pos         :: integer(),
+    chunkmap_pos          :: integer(),
+    data_pos              :: integer(),
+    daycandle,         %% :: undefined | #candle{}
+    candle,            %% :: undefined | #candle{}  % last chunk's candle
+    daystart              :: integer(),
+    last_ts         = 0   :: integer(),
+    last_quote   = {0,0}  :: {integer(), integer()},
     next_chunk_time = 0,
     chunkmap        = #cm{}
-}).
+  }).
 
 -define(SECDB_VERSION, 100).
--define(DAY_USECS, 86400*1000000).          %% Microseconds in a day
+-define(DAY_USECS, 86400*1000000).            %% Microseconds in a day
 
 -define(SECDB_OPTIONS, [
     {version,       ?SECDB_VERSION},
@@ -34,15 +36,14 @@
     {date,          utcdate()},
     {depth,         10},
     {scale,         100},
-    {have_candle,   true},
-    {chunk_size,    300} % seconds
+    {window_sec,      300} % seconds
   ]).
 
 -define(OFFSETLEN_BYTES, 4).
--define(OFFSETLEN_BITS,  32).
+-define(OFFSETLEN_BITS, 32).
+-define(CANDLE_SIZE,   6*4).
 
--define(NUMBER_OF_CHUNKS(ChunkSize), (24*3600 div ChunkSize)*1000 + 1).
-
+-define(NUMBER_OF_CHUNKS(ChunkSize), (24*3600 div ChunkSize) + 1).
 
 -define(assertEqualEps(Expect, Expr, Eps),
     ((fun (__X) ->

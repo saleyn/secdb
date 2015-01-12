@@ -60,28 +60,28 @@ struct SecdbWriter {
 
 private:
     typedef typename traits::fixed_size_allocator::template
-        rebind<StreamInfo*>::other                 ptr_allocator;
+        rebind<StreamInfo*>::other                  ptr_allocator;
     typedef std::set<
         StreamInfo*, StreamInfo_lt, ptr_allocator
     >                                               pending_data_streams_set;
 
 
-    typedef std::vector<StreamInfo*>               StreamInfo_vec;
+    typedef std::vector<StreamInfo*>                StreamInfo_vec;
     typedef typename traits::fixed_size_allocator::template
-        rebind<Command>::other                    cmd_allocator;
+        rebind<Command>::other                      cmd_allocator;
 
     std::mutex                                      m_mutex;
     std::condition_variable                         m_cond_var;
     std::shared_ptr<std::thread>                    m_thread;
     cmd_allocator                                   m_cmd_allocator;
     msg_allocator                                   m_msg_allocator;
-    std::atomic<Command*>                         m_head;
+    std::atomic<Command*>                           m_head;
     volatile bool                                   m_cancel;
     int                                             m_max_queue_size;
     std::atomic<long>                               m_total_msgs_processed;
     event_type                                      m_event;
     std::atomic<long>                               m_active_count;
-    StreamInfo_vec                                 m_files;
+    StreamInfo_vec                                  m_files;
     pending_data_streams_set                        m_pending_data_streams;
     int                                             m_last_version;
     err_handler                                     m_err_handler;

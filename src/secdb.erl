@@ -2,7 +2,9 @@
 %%% Designed for continious writing of symbol data
 %%% with later fast read and fast seek
 -module(secdb).
--author({"Danil Zagoskin", 'z@gosk.in'}).
+-author('z@gosk.in').
+-author('saleyn@gmail.com').
+
 -include("../include/secdb.hrl").
 -include("log.hrl").
 -include("secdb.hrl").
@@ -27,6 +29,7 @@
 -export_type([secdb/0, price/0, volume/0, quote/0, timestamp/0, symbol/0, date/0]).
 -export_type([market_data/0, trade/0]).
 
+-export([test/0, test1/0, test2/0]).
 
 %% Application configuration
 -export([get_value/1, get_value/2]).
@@ -81,18 +84,64 @@ common_dates(Storage, Symbols) -> secdb_fs:common_dates(Storage, Symbols).
 open_read(Symbol, Date) ->
   secdb_reader:open(Symbol, Date).
 
+test() ->
+  Date = {2015,1,5},
+  Path = secdb_fs:path('NSDQ.AAPL', Date),
+  file:delete(Path),
+  open_append('NSDQ.AAPL', Date, [{depth,2}]).
+
+test1() ->
+  Date    = {2015, 1, 5},
+  {ok, A} = try
+              test()
+            catch _:Err ->
+              io:format("Error: ~p\n", [Err]),
+              throw
+            end,
+  lists:foldl(
+    fun(MD, F) -> append(MD, F) end,
+    A,
+    [
+      #md   {timestamp = timestamp({Date, {0,0,1}}),
+             bid = [{450.01,100}, {450.00,80}], ask = [{450.05, 50}]},
+      #md   {timestamp = timestamp({Date, {0,1,2}}),
+             bid = [{450.05,80},  {450.03,50}],
+             ask = [{450.07,150}, {450.10,80}]},
+      #trade{timestamp = timestamp({Date, {0,1,3}}), price = 450.05, volume = 200, aggressor = true, side=buy},
+      #trade{timestamp = timestamp({Date, {0,1,4}}), price = 450.01, volume = 50, side=sell},
+      #md   {timestamp = timestamp({Date, {0,2,5}}),
+             bid = [{450.05,80},  {450.03,50}],
+             ask = [{450.07,150}, {450.10,80}]}
+      #md   {timestamp = timestamp({Date, {0,5,15}}),
+             bid = [{450.15,180}, {450.13,150}],
+             ask = [{450.18,140}, {450.19,30}]},
+      #md   {timestamp = timestamp({Date, {0,5,16}}),
+        bid = [{450.15,180}, {450.10,100}],
+        ask = [{450.18,140}, {450.20,50}]},
+      #md   {timestamp = timestamp({Date, {0,5,17}}),
+        bid = [{450.15,200}],
+        ask = [{450.18,110}]}
+    ]),
+  ok.
+
+test2() ->
+  %secdb:events('NSDQ.AAPL', {2015, 1, 5}).
+  %secdb_format_tests:full_md_test().
+  secdb_reader_tests:candle_test().
+
+
 %% @doc Open symbol for appending
 -spec open_append(symbol(), date(), [open_option()]) -> {ok, secdb()} | {error, Reason::term()}.  
 open_append(Symbol, Date, Opts) when is_list(Opts) ->
   Path = secdb_fs:path(Symbol, Date, create),
-  io:format("Path: ~p\n", [Path]),
   {db, RealSymbol, RealDate} = secdb_fs:file_info(Path),
   secdb_appender:open(Path, [{symbol,RealSymbol},{date,secdb_fs:parse_date(RealDate)}|Opts]).
 
 %% @doc Append row to db
--spec append(secdb(), trade() | market_data()) -> {ok, secdb()} | {error, Reason::term()}.
-append(Event, Symboldb) ->
-  secdb_appender:append(Event, Symboldb).
+%% Throws exception on error
+-spec append(trade() | market_data(), secdb()) -> secdb().
+append(Event, DB) ->
+  secdb_appender:append(Event, DB).
 
 -spec write_events(symbol(), date(), [trade() | market_data()]) -> ok | {error, Reason::term()}.
 write_events(Symbol, Date, Events) ->

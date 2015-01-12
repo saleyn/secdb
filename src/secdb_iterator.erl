@@ -42,8 +42,8 @@
   }).
 
 %% @doc Initialize iterator. Position at the very beginning of data
-init(#db{} = DBState) ->
-  {Offset, State} = first_chunk_offset(DBState),
+init(#db{} = DB) ->
+  {Offset, State} = first_chunk_offset(DB),
   {ok, #iterator{db = State, data_start = Offset, position = Offset}}.
 
 %% @doc Filter source iterator, expposing same API as usual iterator
@@ -68,10 +68,10 @@ restore_last_state(Iterator) ->
 
 
 %% @doc get start of first chunk
-first_chunk_offset(#db{chunkmap = ChunkMap} = _DBstate) ->
+first_chunk_offset(#db{chunkmap = ChunkMap} = DB) ->
   case secdb_cm:pop(ChunkMap) of
-    {{_N, _T, Offset}, CM} -> {Offset,    CM};  % Return offset from first chunk
-    {undefined,        CM} -> {undefined, CM}   % Empty chunk map -> offset undefined
+    {{_N, _T, Offset, _Candle}, CM} -> {Offset, DB#db{chunkmap=CM}};  % Offset from first chunk
+    {undefined,                _CM} -> {undefined, DB}  % Empty chunk map -> undef offset
   end.
 
 %% @doc Set position to given time
@@ -115,62 +115,52 @@ set_range({Start, End}, Iterator) ->
 
 
 %% @doc Seek forward event-by-event while timestamp is less than given
-seek_until(undefined, Iterator) ->
-  Iterator;
-seek_until(UTC, #iterator{} = Iterator) ->
+seek_until(UTC, #iterator{} = Iterator) when is_integer(UTC) ->
   case read_event(Iterator) of
     {eof, NextIterator} ->
       % EOF. Just return what we have
       NextIterator;
-    {Event, NextIterator} when is_integer(UTC) ->
-      case packet_timestamp(Event) of
-        Before when Before < UTC ->
-          % Drop more
-          seek_until(UTC, NextIterator);
-        _After ->
-          % Revert to state before getting event
-          Iterator
-      end;
-    {_, NextIterator} when UTC == eof ->
-      seek_until(UTC, NextIterator)
-  end.
+    {_Event, NextIterator = #iterator{db = #db{last_ts = TS}}} when TS < UTC ->
+      % Drop more
+      seek_until(UTC, NextIterator);
+    {_Event, _NextIterator} ->
+      % Revert to state before getting event
+      Iterator
+  end;
+seek_until(Time, Iterator) when Time=:=undefined; Time=:=eof ->
+  Iterator.
 
 %% @doc Pop first event from iterator, return {Event|eof, NewIterator}
-read_event(#iterator{position = undefined} = Iterator) ->
-  {eof, Iterator};
-
-read_event(#iterator{db = #db{buffer = FullBuffer} = DBState, position = Pos, last_utc = LastUTC} = Iterator) ->
-  <<_:Pos/binary, Buffer/binary>> = FullBuffer,
-  {Event, ReadBytes, NewDBState} = case Buffer of
-    <<>> -> {eof, 0, DBState};
-    _Other -> get_first_packet(Buffer, DBState)
-  end,
-  case packet_timestamp(Event) of
-    Before when LastUTC == undefined orelse Before == undefined orelse Before =< LastUTC ->
+read_event(#iterator{db=DB, position= P} = I) when P =:= undefined; size(DB#db.buffer) =:= P ->
+  {eof, I};
+read_event(#iterator{db = #db{buffer = Buf} = DB, position=Pos, last_utc = LastUTC} = I)
+    when byte_size(Buf) > Pos ->
+  {_Mode, Event, NewPos, NewDB} = secdb_format:decode_packet(Buf, Pos, DB),
+  ?DBG("Read event at ~w (pos ~w, new pos ~w): ~w",
+    [DB#db.data_pos+Pos, Pos, NewPos, Event]),
+  case NewDB#db.last_ts of
+    Before when LastUTC == undefined; Before == undefined; Before =< LastUTC ->
       % Event is before given limit or we cannot compare
-      {Event, Iterator#iterator{db = NewDBState, position = Pos + ReadBytes}};
+      {Event, I#iterator{db = NewDB, position = NewPos}};
     _After ->
-      {eof, Iterator}
+      {eof, I}
   end;
 
 %% @doc read from filter: first, try to read from buffer
-read_event(#filter{buffer = [Event|BufTail]} = Filter) ->
-  {Event, Filter#filter{buffer = BufTail}};
+read_event(#filter{buffer = [Event|Tail]} = Filter) ->
+  {Event, Filter#filter{buffer = Tail}};
 
 %% @doc read from filter: empty buffer -> pass event from source and retry
 read_event(#filter{buffer = [], source = Source, ffun = FFun, state = State} = Filter) ->
-  {SrcEvent, NextSource} = read_event(Source),
-  {NewBuffer, NextState} = FFun(SrcEvent, State),
+  {SrcEvent, NextSrc} = read_event(Source),
+  {NewBuffer, State1} = FFun(SrcEvent, State),
 
   % Filter isn't meant to pass eof, so append it
   RealBuffer = case SrcEvent of
     eof -> NewBuffer ++ [eof];
-    _ -> NewBuffer
+    _   -> NewBuffer
   end,
-  read_event(Filter#filter{
-      buffer = RealBuffer,
-      source = NextSource,
-      state = NextState}).
+  read_event(Filter#filter{buffer=RealBuffer, source=NextSrc, state=State1}).
 
 %% @doc read all events from buffer until eof
 all_events(Iterator) ->
@@ -183,17 +173,6 @@ all_events(Iterator, RevEvents) ->
     {Event, NextIterator} ->
       all_events(NextIterator, [Event|RevEvents])
   end.
-
-%% @doc get first event from buffer when State is db state at the beginning of it
-get_first_packet(Buffer, #db{depth = Depth, last_md = LastMD, scale = Scale} = State) ->
-  {ok, Packet, Size} = secdb_format:decode_packet(Buffer, Depth, LastMD, Scale),
-  NextState = case Packet of
-    #md{timestamp = Timestamp} ->
-      State#db{last_timestamp = Timestamp, last_md = Packet};
-    #trade{timestamp = Timestamp} ->
-      State#db{last_timestamp = Timestamp}
-  end,
-  {Packet, Size, NextState}.
 
 % Foldl: low-memory fold over entries
 foldl(Fun, Acc0, Iterator) ->
@@ -214,8 +193,3 @@ do_foldl(Fun, AccIn, Iterator) ->
       AccOut = Fun(Event, AccIn),
       do_foldl(Fun, AccOut, NextIterator)
   end.
-
-
-packet_timestamp({md, Timestamp, _Bid, _Ask}) -> Timestamp;
-packet_timestamp({trade, Timestamp, _Price, _Volume}) -> Timestamp;
-packet_timestamp(eof) -> undefined.

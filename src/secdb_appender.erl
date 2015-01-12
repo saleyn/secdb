@@ -1,5 +1,6 @@
 -module(secdb_appender).
 -author('Max Lapshin <max@maxidoors.ru>').
+-author('saleyn@gmail.com').
 
 -include("../include/secdb.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -20,24 +21,26 @@ open(Path, Opts) ->
       create_new_db(Path, Opts)
   end.
 
-close(#db{file = File} = State) ->
-  write_candle(State),
-  file:close(File),
+close(#db{file = File, daycandle = DCandle, daycandle_pos = DCPos, candle = Candle}=DB) ->
+  % Write last candle info
+  CandleAddPos = DB#db.chunkmap_pos+?OFFSETLEN_BYTES,
+  CandlePos    = secdb_helpers:chunk_idx_pos(DB#db.cur_chunk_num, CandleAddPos),
+  write_candle(File, CandlePos, Candle),
+  % Write daycandle info
+  write_candle(File, DCPos,     DCandle),
+  file:close  (File),
   ok.
 
 write_events(Symbol, Date, Events, Options) ->
   {ok, DB} = open(Symbol, Date, [{symbol, Symbol}, {date, Date} | Options]),
   write_events2(DB, Events).
 
-write_events(Path, Events, Options) ->
+write_events(Path, Events, Options) when is_list(Path) ->
   {ok, DB} = open(Path, Options),
   write_events2(DB, Events).
 
-write_events2(DBState, Events) ->
-  S1 = lists:foldl(fun(Event, State) ->
-        {ok, NextState} = append(Event, State),
-        NextState
-    end, DBState, Events),
+write_events2(#db{} = DB, Events) when is_list(Events) ->
+  S1 = lists:foldl(fun(Event, State) -> append(Event, State) end, DB, Events),
   ok = close(S1).
 
 %% @doc Create a header for new DB
@@ -51,42 +54,45 @@ write_events2(DBState, Events) ->
 %% rows
 create_new_db(Path, Opts) ->
   filelib:ensure_dir(Path),
-  {ok, File} = file:open(Path, [binary,write,exclusive,raw,delayed_write]),
-  {ok, 0} = file:position(File, bof),
-  ok = file:truncate(File),
+  {ok, File}        = file:open(Path, [binary,write,exclusive,raw,delayed_write]),
+  {ok, 0}           = file:position(File, bof),
+  ok                = file:truncate(File),
 
-  {symbol, Symbol} = lists:keyfind(symbol, 1, Opts),
-  {date, Date}     = lists:keyfind(date, 1, Opts),
-  State            = #db{
-    mode           = append,
-    version        = ?SECDB_VERSION,
-    symbol         = Symbol,
-    date           = secdb_fs:parse_date(Date),
-    sync           = not lists:member(nosync, Opts),
-    path           = Path,
-    have_candle    = proplists:get_value(have_candle, Opts, true),
-    depth          = proplists:get_value(depth, Opts, 1),
-    scale          = proplists:get_value(scale, Opts, 100),
-    chunk_size     = proplists:get_value(chunk_size, Opts, 5*60)
+  {symbol, Sym}     = lists:keyfind(symbol, 1, Opts),
+  {date, Date0}     = lists:keyfind(date, 1, Opts),
+  Date              = secdb_fs:parse_date(Date0),
+  Daystart          = secdb_helpers:daystart(Date),
+  State             = #db{
+    mode            = append,
+    file            = File,
+    version         = ?SECDB_VERSION,
+    symbol          = Sym,
+    date            = Date,
+    daystart        = Daystart,
+    next_chunk_time = Daystart,
+    cur_chunk_num   = 0,
+    sync            = not lists:member(nosync, Opts),
+    path            = Path,
+    depth           = proplists:get_value(depth, Opts, 1),
+    scale           = proplists:get_value(scale, Opts, 100),
+    window_sec      = proplists:get_value(window_sec, Opts, 5*60)
   },
 
-  {ok, CandleOffset0} = write_header(File, State),
-  CandleOffset = case State#db.have_candle of
-    true -> CandleOffset0;
-    false -> undefined
-  end,
-  {ok, ChunkMapOffset} = write_candle(File, State),
-  {ok, _CMSize} = write_chunkmap(File, State),
+  {ok, CandleOffs}  = write_header(State),
+  DB                = secdb_helpers:set_db_offsets(State#db{daycandle_pos = CandleOffs}),
 
-  {ok, State#db{
-      file = File,
-      candle_offset = CandleOffset,
-      chunkmap_offset = ChunkMapOffset
-    }}.
+  % Write empty daycandle
+  write_candle(File, CandleOffs, #candle{}),
+  ok                = write_chunkmap(DB),
+  % write BOF indicator, so that first chank's valid offset is 1
+  % when counting from this position:
+  ok                = file:write(File, <<16#FF>>),
+  ?DBG("Database ~s initial size: ~w", [Path, element(2, file:position(File, cur))]),
+  {ok, DB}.
 
 
 open_existing_db(Path, _Opts) ->
-  secdb_reader:open_existing_db(Path, [binary,write,read,raw]).
+  secdb_reader:open_existing_db(Path, [binary,write,read,raw,delayed_write]).
 
 
 % Validate event and return {Type, Timestamp} if valid
@@ -94,152 +100,153 @@ validate_event(#md{timestamp = TS, bid = Bid, ask = Ask} = Event) ->
   valid_bidask(Bid) orelse  throw({?MODULE, bad_bid, Event}),
   valid_bidask(Ask) orelse  throw({?MODULE, bad_ask, Event}),
   is_integer(TS)    andalso TS > 0 orelse throw({?MODULE, bad_timestamp, Event}),
-  {md, TS};
-
+  TS;
 validate_event(#trade{timestamp = TS, price = P, volume = V} = Event) ->
   is_number(P)   orelse  throw({?MODULE, bad_price, Event}),
   is_integer(V)  andalso V >= 0 orelse throw({?MODULE, bad_volume, Event}),
   is_integer(TS) andalso TS > 0 orelse throw({?MODULE, bad_timestamp, Event}),
-  {trade, TS};
-
+  TS;
 validate_event(Event) ->
   throw({?MODULE, invalid_event, Event}).
 
-
-valid_bidask([{P,V}|_]) when is_number(P) andalso is_integer(V) andalso V >= 0 ->
+valid_bidask([{P,V}|_]) when is_number(P), is_integer(V), V >= 0 ->
   true;
 valid_bidask(_) -> false.
 
-
-append(_Event, #db{mode = Mode}) when Mode =/= append ->
-  {error, reopen_in_append_mode};
-
-append(Event, #db{next_chunk_time = NCT, file = File, last_md = LastMD, sync = Sync} = State) ->
-  {Type, Timestamp} = validate_event(Event),
+append(Event, #db{mode = append, next_chunk_time=NCT, file=F, sync=Sync} = DB) when is_integer(NCT) ->
+  Timestamp = validate_event(Event),
   if
-    (Timestamp >= NCT orelse NCT == undefined) ->
-      {ok, EOF}    = file:position(File, eof),
-      {ok, State0} = append_first_event(Event, State),
-      sync(Sync, File),
+    Timestamp >= NCT ->
+      {ok, EOF}    = file:position(F, eof),
+      State0       = append_event(full, Event, DB),
+      sync(Sync, F),
       {ok, State1} = start_chunk(Timestamp, EOF, State0),
-      sync(Sync, File),
-      {ok, State1};
-    LastMD == undefined andalso Type == md ->
-      append_full_md(Event, State);
-    Type == md ->
-      append_delta_md(Event, State);
-    Type == trade ->
-      append_trade(Event, State)
-  end.
+      sync(Sync, F),
+      State1;
+    true ->
+      append_event(delta, Event, DB)
+  end;
+append(_Event, #db{mode = Mode}) ->
+  throw({reopen_db_in_append_mode, Mode}).
+
+-ifdef(DEBUG).
+split(0, _)     -> [];
+split(I, [H|T]) -> [H|split(I-1, T)];
+split(_, [])    -> [].
+-define(SCALE(I), round(math:log(I)/math:log(10))).
+-endif.
+
+append_event(Mode, #md{timestamp = _TS} = MD, #db{file = F, scale=_S, depth = _D} = DB) ->
+  {Data,DB1} = secdb_format:encode(Mode, MD, DB),
+  ?DBG("Write ~-5w md    at ~w: (~3w) ~299p (time: ~w)\n~*s(last=~w) bid=~s ask=~s",
+    [Mode,element(2,file:position(F,eof)),size(Data),Data,_TS, 52, " ", DB1#db.last_quote,
+     string:join(
+       [io_lib:format("~w@~.*f", [V,?SCALE(_S),P]) || {P,V} <- split(_D, MD#md.bid)], ","),
+     string:join(
+       [io_lib:format("~w@~.*f", [V,?SCALE(_S),P]) || {P,V} <- split(_D, MD#md.ask)], ",")
+    ]),
+  ok = file:write(F, Data),
+  DB1;
+
+append_event(Mode, #trade{timestamp=_TS, side=Side, price=Price, volume=Qty} = Trade,
+             #db{file = File, scale=S, daycandle=DCandle0, candle = Candle0} = DB)
+    when is_number(Price), is_integer(Qty), is_atom(Side) ->
+  P          = round (Price * S),
+  DCandle    = candle(DCandle0, Side, P, Qty),
+  Candle     = candle(Candle0,  Side, P, Qty),
+  {Data,DB1} = secdb_format:encode(Mode, Trade, DB#db{daycandle = DCandle, candle = Candle}),
+  {ok,   _N} = file:position(File, eof),
+  ?DBG("Write ~-5w trade at ~w: (~3w) ~299p (time: ~w)\n~*s(last=~w) ~w",
+    [Mode, _N, size(Data), Data, _TS, 52, " ", DB1#db.last_quote, Trade]),
+  ok         = file:write(File, Data),
+  DB1.
+
 
 sync(true, File) -> file:sync(File);
 sync(false,   _) -> ok.
 
-append_first_event(Event = #md{},    State) ->
-  append_full_md(Event, State);
-append_first_event(Event = #trade{}, State) ->
-  append_trade(Event, State#db{last_md = undefined}).
-
-write_header(File, #db{chunk_size = CS, date = Date, depth = Depth, scale = Scale, symbol = Symbol, version = Version,
-  have_candle = HaveCandle}) ->
-  SymbolDBOpts = [{chunk_size,CS},{date,Date},{depth,Depth},{scale,Scale},{symbol,Symbol},{version,Version},{have_candle,HaveCandle}],
-  {ok, 0} = file:position(File, 0),
-  ok = file:write(File, <<"#!/usr/bin/env secdb\n">>),
+write_header(#db{file = File, window_sec = I, date = Date, depth = Depth, scale = Scale,
+                 symbol = Symbol, version = Version}) ->
+  SymbolDBOpts = [{version,Version},{symbol,Symbol},{date,Date},
+                  {window_sec, I},{depth,Depth},{scale,Scale}],
+  MaxKeyLen    = lists:max([length(atom_to_list(K)) || {K,_} <- SymbolDBOpts]),
+  {ok, 0}      = file:position(File, 0),
+  ok           = file:write(File, <<"#!/usr/bin/env secdb\n">>),
   lists:foreach(fun
-    ({have_candle,false}) ->
-      ok;
     ({Key, Value}) ->
-      ok = file:write(File, [io_lib:print(Key), ": ", secdb_format:format_header_value(Key, Value), "\n"])
+      L  = io_lib:format("~.*s: ~s\n",
+            [MaxKeyLen, Key, secdb_format:format_header_value(Key, Value)]),
+      ok = file:write(File, [L])
     end, SymbolDBOpts),
   ok = file:write(File, "\n"),
   file:position(File, cur).
 
+write_chunkmap(#db{file=File, window_sec=I, data_pos=_DStart, path=_Path}) ->
+  %% Chunkmap is a list of ChunkCount entries:
+  %% +-----------+------------+
+  %% |ChunkOffset|PeriodCandle|
+  %% +-----------+------------+
+  %%   4 bytes     6*4 bytes
 
-write_candle(File, #db{have_candle = true}) ->
-  file:write(File, <<0:32, 0:32, 0:32, 0:32>>),
-  file:position(File, cur);
+  ChunkCount  = ?NUMBER_OF_CHUNKS(I),
+  BitSize     = 8 * ChunkCount * (?OFFSETLEN_BYTES + ?CANDLE_SIZE),
+  ChunkMap    = <<0:BitSize>>,
+  file:position(File, eof),
+  ?DBG("Write chunkmap at ~w size=~w (data offset: ~w) file: ~s",
+    [element(2,file:position(File,cur)), size(ChunkMap), _DStart, _Path]),
+  ok = file:write(File, ChunkMap).
 
-write_candle(File, #db{have_candle = false}) ->
-  file:position(File, cur).
-
-write_chunkmap(File, #db{chunk_size = ChunkSize}) ->
-  ChunkCount = ?NUMBER_OF_CHUNKS(ChunkSize),
-  BitSize    = ChunkCount * ?OFFSETLEN_BITS,
-  ChunkMap   = <<0:BitSize>>,
-  {ok = file:write(File, ChunkMap), BitSize}.
-
-
-start_chunk(Timestamp, Offset, #db{daystart = undefined, date = Date} = State) ->
-  start_chunk(Timestamp, Offset, State#db{daystart = daystart(Date)});
-
-start_chunk(Timestamp, Offset, #db{daystart = Daystart, chunk_size = ChunkSize,
-    chunkmap = ChunkMap} = State) when Timestamp >= Daystart, (Timestamp - Daystart) < 86400000 ->
-
-  ChunkSizeMs = timer:seconds(ChunkSize),
+start_chunk(Timestamp, Offset,
+    #db{daystart = Daystart, window_sec = WS, chunkmap = ChunkMap} = S)
+    when is_integer(Timestamp), is_integer(Daystart)
+       , Timestamp >= Daystart, (Timestamp - Daystart) < 86400000 ->
+  ChunkSizeMs = timer:seconds(WS),
   ChunkNumber = (Timestamp - Daystart) div ChunkSizeMs,
+  {ChunkOffset, S1} = write_chunk_index(ChunkNumber, Offset, S),
 
-  ChunkOffset = current_chunk_offset(Offset, State),
-  write_chunk_offset(ChunkNumber, ChunkOffset, State),
+  % Next chunk time
+  NCT = Daystart + ChunkSizeMs * (ChunkNumber + 1),
 
-  NextChunkTime = Daystart + ChunkSizeMs * (ChunkNumber + 1),
-
-  %?debugFmt("Write chunk number ~w at offset: ~w (pos: ~w, time: ~w)",
-  %  [ChunkNumber, State#db.chunkmap_offset + ChunkNumber*?OFFSETLEN_BYTES, ChunkOffset, Timestamp]),
-
+  ?DBG("Write chunk number ~w at index pos: ~w+~w=~w (data pos: ~w+~w=~w, time: ~w)",
+    [ChunkNumber, S#db.chunkmap_pos, ChunkNumber*?OFFSETLEN_BYTES,
+     S#db.chunkmap_pos + ChunkNumber*?OFFSETLEN_BYTES,
+     S#db.data_pos, ChunkOffset, S#db.data_pos + ChunkOffset, Timestamp]),
   Chunk = {ChunkNumber, Timestamp, ChunkOffset},
+  NCM   = secdb_cm:push(Chunk,ChunkMap),
   % ?D({new_chunk, Chunk}),
-  State1 = State#db{
-    chunkmap = secdb_cm:push(Chunk, ChunkMap),
-    next_chunk_time = NextChunkTime},
-  write_candle(State1),
-  {ok, State1}.
+  S2    = S1#db{chunkmap = NCM, next_chunk_time = NCT, candle = undefined},
+  write_candle(S2#db.file, S2#db.daycandle_pos, S2#db.daycandle),
+  {ok, S2}.
 
-write_candle(#db{have_candle = false}) ->  ok;
-write_candle(#db{candle = undefined}) -> ok;
-write_candle(#db{have_candle = true, candle_offset = CandleOffset, candle = {O,H,L,C}, file = File}) ->
-  ok = file:pwrite(File, CandleOffset, <<1:1, O:31, H:32, L:32, C:32>>).
+write_chunk_index(ChunkNum, Offset, #db{file=F, chunkmap_pos=Start, data_pos=Data}=DB) ->
+  % Write accumulated candle of the last chunk
+  CandlePos   = secdb_helpers:chunk_idx_pos(DB#db.cur_chunk_num, Start+?OFFSETLEN_BYTES),
+  write_candle(F, CandlePos, DB#db.candle),
+  % Calculate offset of the newly formed chunk and write it to the chunk index
+  ChunkOffset = Offset - Data,
+  Pos         = secdb_helpers:chunk_idx_pos(ChunkNum, Start),
+  Bin         = <<ChunkOffset:?OFFSETLEN_BITS/integer, (encode_candle(undefined))/binary>>,
+  ok = file:pwrite(F, Pos, Bin),
+  {ChunkOffset, DB#db{cur_chunk_num = ChunkNum, candle = undefined}}.
 
+write_candle(_File, _Pos, undefined) ->
+  ok;
+write_candle(File, Pos, #candle{} = Candle) when is_integer(Pos) ->
+  ok = file:pwrite(File, Pos, encode_candle(Candle)).
 
-current_chunk_offset(Offset, #db{chunkmap_offset = ChunkMapOffset} = _State) ->
-  Offset - ChunkMapOffset.
+candle(undefined, buy,  P, V) -> #candle{open=P, high=P, low=P, close=P, vbuy=V, vsell=0};
+candle(undefined, sell, P, V) -> #candle{open=P, high=P, low=P, close=P, vbuy=0, vsell=V};
+candle(#candle{high=H}=C, Side, P, V) when P > H ->
+  add_vol(Side, V, C#candle{high=P, close=P});
+candle(#candle{low =L}=C, Side, P, V) when P < L ->
+  add_vol(Side, V, C#candle{low=P,  close=P});
+candle(#candle{}=C, Side, P, V) ->
+  add_vol(Side, V, C#candle{close=P}).
 
-write_chunk_offset(ChunkNum, ChunkOffset, #db{file = F, chunkmap_offset = CMOffset} = _State) ->
-  ok = file:pwrite(F, CMOffset + ChunkNum * ?OFFSETLEN_BYTES, <<ChunkOffset:?OFFSETLEN_BITS/integer>>).
+add_vol(buy,  Qty, #candle{vbuy  = N} = C) -> C#candle{vbuy  = N+Qty};
+add_vol(sell, Qty, #candle{vsell = N} = C) -> C#candle{vsell = N+Qty}.
 
-
-append_full_md(#md{timestamp = Timestamp} = MD, #db{file = F, scale = Scale, depth = Depth} = State) ->
-  Data = secdb_format:encode_full_md(MD, Scale, Depth),
-  {ok, _EOF} = file:position(F, eof),
-  %?debugFmt("Write full at offset ~w: (~w) ~299p (time: ~w)", [_EOF, size(Data), Data, Timestamp]),
-  ok = file:write(F, Data),
-  {ok, State#db{last_timestamp = Timestamp, last_md = MD}}.
-
-append_delta_md(#md{timestamp = TS} = MD, #db{file = F, last_md = LastMD, scale = Scale, depth = Depth} = State) ->
-  Data = secdb_format:encode_delta_md(MD, LastMD, Scale, Depth),
-  {ok, _EOF} = file:position(F, eof),
-  %?debugFmt("Write delta at offset ~w: (~w) ~299p (time: ~w)", [_EOF, size(Data), Data, TS]),
-  ok = file:write(F, Data),
-  {ok, State#db{last_timestamp = TS, last_md = MD}}.
-
-append_trade(#trade{timestamp = Timestamp, price = Price} = Trade, 
-  #db{file = File, scale = Scale, candle = Candle, have_candle = HaveCandle} = State) ->
-  Data = secdb_format:encode_trade(Trade, Scale),
-  {ok, _EOF} = file:position(File, eof),
-  %?debugFmt("Write trade at offset ~w: (~w) ~299p (time: ~w)", [_EOF, size(Data), Data, Timestamp]),
-  ok = file:write(File, Data),
-  Candle1 = case HaveCandle of
-    true  -> candle(Candle, round(Price*Scale));
-    false -> Candle
-  end,
-  {ok, State#db{last_timestamp = Timestamp, candle = Candle1}}.
-
-
-daystart(Date) ->
-  DaystartSeconds = calendar:datetime_to_gregorian_seconds({Date, {0,0,0}}) - calendar:datetime_to_gregorian_seconds({{1970,1,1}, {0,0,0}}),
-  DaystartSeconds * 1000.
-
-
-candle(undefined, Price) -> {Price, Price, Price, Price};
-candle({O,H,L,_C}, Price) when Price > H -> {O,Price,L,Price};
-candle({O,H,L,_C}, Price) when Price < L -> {O,H,Price,Price};
-candle({O,H,L,_C}, Price) -> {O,H,L,Price}.
+encode_candle(undefined) ->
+  <<0:32, 0:32, 0:32, 0:32, 0:32, 0:32>>;
+encode_candle(#candle{open = O, high = H, low = L, close = C, vbuy = VB, vsell = VS}) ->
+  <<1:1, O:31, H:32, L:32, C:32, VB:32, VS:32>>.

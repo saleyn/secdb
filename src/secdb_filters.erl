@@ -8,9 +8,9 @@
 -export([candle/2, count/2, drop/2, last/2]).
 % -export([average/2]).
 
--record(candle, {
-    type = md,
-    period = 30000,
+-record(can, {
+    type     = md :: md | trade | all,
+    period   = 30000,
     ref_time = undefined,
     current_segment,
     open,
@@ -19,48 +19,38 @@
     close
 }).
 
-parse_options([], #candle{} = Candle) ->
+parse_options([], #can{} = Candle) ->
   Candle;
-parse_options([{period, Period}|MoreOpts], #candle{} = Candle) ->
-  parse_options(MoreOpts, Candle#candle{period = Period});
-parse_options([{type, Type}|MoreOpts], #candle{} = Candle) ->
-  parse_options(MoreOpts, Candle#candle{type = Type});
-parse_options([{ref_time, RefTime}|MoreOpts], #candle{} = Candle) when RefTime == start; RefTime == finish ->
-  parse_options(MoreOpts, Candle#candle{ref_time = RefTime}).
+parse_options([{period, Period}|MoreOpts], #can{} = Candle) ->
+  parse_options(MoreOpts, Candle#can{period = Period});
+parse_options([{type, T} | MoreOpts], #can{} = Candle) when T=:=md; T=:=trade; T=:=all ->
+  parse_options(MoreOpts, Candle#can{type = T});
+parse_options([{ref_time, Time}|T], #can{} = Candle) when Time == start; Time == finish ->
+  parse_options(T, Candle#can{ref_time = Time}).
 
 
 candle(Event, undefined) ->
-  candle(Event, []);
+  candle2(Event, []);
+candle(Event, Opts) when is_list(Opts) ->
+  Candle = parse_options(Opts, #can{}), 
+  candle2(Event, Candle).
 
-candle(Packet, Opts) when is_list(Opts) ->
-  Candle = parse_options(Opts, #candle{}), 
-  candle(Packet, Candle);
-
-candle(#md{} = MD, #candle{type = Type} = Candle) when Type =/= md ->
-  {[MD], Candle};
-
-candle(#trade{} = Trade, #candle{type = Type} = Candle) when Type =/= trade ->
-  {[Trade], Candle};
-
-candle(eof, #candle{} = Candle) ->
+candle2(Event = #md{},    #can{type = Type} = Candle) when Type =/= md ->
+  {[Event], Candle};
+candle2(Event = #trade{}, #can{type = Type} = Candle) when Type =/= trade ->
+  {[Event], Candle};
+candle2(eof, #can{} = Candle) ->
   flush_segment(Candle);
-
-candle(Unknown, #candle{} = Candle)
-when not is_record(Unknown, md) andalso not is_record(Unknown, trade) ->
-  {[Unknown], Candle};
-
-candle(Packet, #candle{open = undefined, period = Period} = Candle) ->
-  Segment = case Period of
-    undefined -> undefined;
-    Int when is_integer(Int) -> timestamp(Packet) div Period
-  end,
-  {[], start_segment(Segment, Packet, Candle)};
-
-candle(Packet, #candle{period = undefined} = Candle) ->
+candle2(Other, #can{} = Candle) when not is_record(Other,md), not is_record(Other,trade) ->
+  {[Other], Candle};
+candle2(Packet, #can{open = undefined, period = undefined} = Candle) ->
+  {[], start_segment(undefined, Packet, Candle)};
+candle2(Packet, #can{open = undefined, period = Period} = Candle) when is_integer(Period) ->
+  {[], start_segment(timestamp(Packet) div Period, Packet, Candle)};
+candle2(Packet, #can{period = undefined} = Candle) ->
   {[], candle_accumulate(Packet, Candle)};
-
-candle(Packet, #candle{period = Period, current_segment = Seg} = Candle)
-when is_number(Period) andalso is_record(Packet, md) orelse is_record(Packet, trade) ->
+candle2(Packet, #can{period = Period, current_segment = Seg} = Candle)
+  when is_number(Period) andalso (is_record(Packet, md) orelse is_record(Packet,trade)) ->
   case timestamp(Packet) div Period of
     Seg ->
       {[], candle_accumulate(Packet, Candle)};
@@ -69,17 +59,17 @@ when is_number(Period) andalso is_record(Packet, md) orelse is_record(Packet, tr
       {Events, start_segment(NewSeg, Packet, Candle1)}
   end.
 
-start_segment(Segment, Packet, Candle) ->
-  Opened = Candle#candle{current_segment = Segment, open = Packet, high = Packet, low = Packet, close = Packet},
-  candle_accumulate(Packet, Opened).
+start_segment(Segment, Pkt, Candle) ->
+  Opened = Candle#can{current_segment = Segment, open = Pkt, high = Pkt, low = Pkt, close = Pkt},
+  candle_accumulate(Pkt, Opened).
 
 % Flush segment if data is collected
-flush_segment(#candle{open = undefined} = Candle) ->
-  % Segment is not opened, so do nothing
+flush_segment(#can{open = undefined} = Candle) ->
+  % Segment is not opened, do nothing
   {[], Candle};
 
-flush_segment(#candle{ref_time = RefTime, current_segment = Segment, period = Period,
-    open = Open, high = High, low = Low, close = Close} = Candle)
+flush_segment(#can{ref_time = RefTime, current_segment = Segment, period = Period,
+                   open = Open, high = High, low = Low, close = Close} = Candle)
 when RefTime == start; RefTime == finish ->
   % User has requested specific reference time, so we return 5-tuple of {Time, Open, High, Low, Close}
   Timestamp = case RefTime of
@@ -89,14 +79,14 @@ when RefTime == start; RefTime == finish ->
   OHLC = {Timestamp, value(open, Open), value(high, High), value(low, Low), value(close, Close)},
   {[OHLC], empty(Candle)};
 
-flush_segment(#candle{open = Open, high = High, low = Low, close = Close} = Candle) ->
+flush_segment(#can{open = Open, high = High, low = Low, close = Close} = Candle) ->
   % By default, return every event as is
   Events = lists:sort([Open, High, Low, Close]), % UTC field is just after (common) type, so events are sorted chronologically
   {Events, empty(Candle)}.
 
 
-empty(#candle{} = Candle) ->
-  Candle#candle{
+empty(#can{} = Candle) ->
+  Candle#can{
     open = undefined,
     high = undefined,
     low = undefined,
@@ -104,8 +94,8 @@ empty(#candle{} = Candle) ->
   }.
 
 
-candle_accumulate(Packet, #candle{high = High, low = Low} = Candle) ->
-  Candle#candle{high = highest(High, Packet), low = lowest(Low, Packet), close = Packet}.
+candle_accumulate(Packet, #can{high = High, low = Low} = Candle) ->
+  Candle#can{high = highest(High, Packet), low = lowest(Low, Packet), close = Packet}.
 
 
 highest(undefined, Packet) ->
@@ -193,8 +183,8 @@ candle_test() ->
   ok.
 
 candle_pass_foreign_test() ->
-  ?assertMatch({[#trade{}], #candle{}}, candle(#trade{}, [{type, md}])),
-  ?assertMatch({[#md{}], #candle{}}, candle(#md{}, [{type, trade}])),
+  ?assertMatch({[#trade{}], #can{}}, candle(#trade{}, [{type, md}])),
+  ?assertMatch({[#md{}], #can{}}, candle(#md{}, [{type, trade}])),
   ok.
 
 candle_no_undefined_test() ->

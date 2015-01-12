@@ -1,14 +1,27 @@
 PROJECT       = secdb
+
+# Use Position-Independent compilation of secdb_api for inclusion into secdb_format.so
+OBJECTS       = $(CURDIR)/c_src/$(PROJECT)_format.o \
+                $(CURDIR)/c_src/$(PROJECT)_api_pic.o
+
 C_SRC_OUTPUT  = priv/$(PROJECT)_format.so
-C_SRC_EXCLUDE = $(CURDIR)/c_src/secdb-reader.cpp \
-                $(CURDIR)/c_src/secdb_api.cpp
 
 CC            = g++
-CXXFLAGS      = -finline-functions -Wall -std=c++11 $(if $(release),-O3,-g -O0) 
+CXXFLAGS      = -finline-functions -Wall -std=c++11 $(if $(release),-O3,-g -O0)
 
 include erlang.mk
 
-ERLC_OPTS    += -DDEBUG
+CFLAGS       := $(filter-out -std=c99 -Wmissing-prototypes,$(CFLAGS))
+ERLC_OPTS    += -DTEST -DDEBUG
+
+
+ifdef BINOPT
+ERLC_OPTS    += +bin_opt_info
+endif
+
+info::
+	@echo "Objects: $(OBJECTS)"
+	@echo "Curdir : $(CURDIR)"
 
 app:: bin/secdb-reader
 
@@ -32,19 +45,32 @@ tar:
 bin/secdb-reader: $(CURDIR)/c_src/secdb-reader.o $(CURDIR)/c_src/secdb_api.o bin
 	$(link_verbose) $(CC) $(filter %.o,$^) $(filter-out -shared,$(LDFLAGS)) $(LDLIBS) -o $@
 
-$(CURDIR)/c_src/secdb-reader.o: $(CURDIR)/c_src/secdb-reader.cpp \
-                                  $(CURDIR)/c_src/secdb_api.cpp \
-                                  $(CURDIR)/c_src/secdb_api.hpp \
-                                  $(CURDIR)/c_src/secdb_api.h
-	$(filter-out -fPIC,$(COMPILE_CPP)) $< -o $@
+$(CURDIR)/c_src/secdb-reader.o: \
+        $(CURDIR)/c_src/secdb-reader.cpp \
+        $(CURDIR)/c_src/secdb_api.cpp \
+        $(CURDIR)/c_src/secdb_api.hpp \
+        $(CURDIR)/c_src/secdb_api.h   \
+        $(CURDIR)/c_src/secdb_types.h
+	$(filter-out -shared -fPIC,$(COMPILE_CPP)) $(OUTPUT_OPTION) $< -o $@
 
-$(CURDIR)/c_src/secdb_api.o: $(CURDIR)/c_src/secdb_api.cpp $(CURDIR)/c_src/secdb_api.hpp
-	$(filter-out -fPIC,$(COMPILE_CPP)) $< -o $@
+$(CURDIR)/c_src/secdb_api_pic.o: \
+        $(CURDIR)/c_src/secdb_api.cpp \
+        $(CURDIR)/c_src/secdb_api.hpp \
+        $(CURDIR)/c_src/secdb_api.h \
+        $(CURDIR)/c_src/secdb_types.h
+	$(COMPILE_CPP) $(OUTPUT_OPTION) $< -o $@
+
+$(CURDIR)/c_src/secdb_api.o: \
+        $(CURDIR)/c_src/secdb_api.cpp \
+        $(CURDIR)/c_src/secdb_api.hpp \
+        $(CURDIR)/c_src/secdb_api.h \
+        $(CURDIR)/c_src/secdb_types.h
+	$(filter-out -shared -fPIC,$(COMPILE_CPP)) $(OUTPUT_OPTION) $< -o $@
 
 $(CURDIR)/c_src/secdb-reader.cpp: $(CURDIR)/c_src/secdb_api.hpp
-
 $(CURDIR)/c_src/secdb_api.cpp:    $(CURDIR)/c_src/secdb_api.hpp
 $(CURDIR)/c_src/secdb_api.hpp:    $(CURDIR)/c_src/secdb_api.h
+$(CURDIR)/c_src/secdb_api.h:      $(CURDIR)/c_src/secdb_types.h
 
 #all:
 #	ERL_LIBS=apps:deps erl -make

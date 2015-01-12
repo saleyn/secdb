@@ -1,10 +1,14 @@
-Stockdb
+Secdb
 =======
 
+This library provides compact storage of timeseries of security market data snapshots.
 
-This library is a storage for Stock Exchange quotes.
+It is a fork of Maxim Lapshin's https://github.com/maxlapshin/stockdb project that has
+been rewriten to support a more compact format, more detailed trade logging, and
+supplemented with a standalone C++ database reader.
 
-It is an append-only online-compress storage, that supports failover, indexing and simple lookups of stored quotes.
+The database implements an append-only online-compressed storage, that supports
+failover, indexing and simple lookups of stored quotes.
 
 It can compress 400 000 daily quotes into 4 MB of disk storage.
 
@@ -13,7 +17,8 @@ Usage
 
 First install and compile it. Include it as a rebar dependency.
 
-It can be used either as an appender, either as reader. You cannot mix these two modes now.
+It can be used either as an appender, either as reader. In current implementation
+these two modes cannot be mixed.
 
 Writing database: Appender
 ==========================
@@ -21,7 +26,7 @@ Writing database: Appender
 Typical workflow when appending data to DB:
 
     {ok, Appender} = secdb:open_append('NASDAQ.AAPL', "2012-01-15", [{depth, 2}]),
-    {ok, Appender1} = secdb:append({md, 1326601810453, [{450.1,100},{449.56,1000}], [{452.43,20},{454.15,40}]}, Appender),
+    Appender1 = secdb:append({md, 1326601810453, [{450.1,100},{449.56,1000}], [{452.43,20},{454.15,40}]}, Appender),
     secdb:close(Appender1).
 
 
@@ -40,14 +45,14 @@ Now take a look at db/stock folder. There you can see new file `db/stock/NASDAQ.
 Reading database
 ================
 
-Read whole DB
--------------
+Read the whole DB
+-----------------
 
 The most simple way is just to read all daily events to replaying them
 
     {ok, Events} = secdb:events('NASDAQ.AAPL', "2012-01-15").
 
-Get candle for whole day or specified time range:
+Get candle for the whole day or specified time range:
 
     DayCandleEvents = secdb:events('NASDAQ.AAPL', "2012-08-10", [{filter, candle, [{period, undefined}]}]).
     RangeCandleEvents = secdb:events('NASDAQ.AAPL', "2012-08-10", [{range, {15,0,0}, {16,0,0}}, {filter, candle, [{period, undefined}]}]).
@@ -156,4 +161,4 @@ There are simple functions which let you know what data you have.
 * To list all stocks having any data in database, use `secdb:stocks()`
 * To list dates when some stock has any data, use `secdb:dates(Stock)`
 * To get date intersection between multiple stocks, use `secdb:common_dates([Stock1, Stock2, ...])`
-* To get some information about file, secdb instance or stock/date pair, use `secdb:info(Stockdb)`, `secdb:info(Filename)`, `secdb:info(Stock, Date)`, `secdb:info(Stock, Date, [Key1, Key2, ...])`. Key can be one of `path, stock, date, version, scale, depth, chunk_size, presence`. Return value is tuplelist. Presence is `{ChunkCount, [ChunkNumber1, ChunkNumber2, ...]}`, representing some internal report.
+* To get some information about file, secdb instance or stock/date pair, use `secdb:info(Stockdb)`, `secdb:info(Filename)`, `secdb:info(Stock, Date)`, `secdb:info(Stock, Date, [Key1, Key2, ...])`. Key can be one of `path, stock, date, version, scale, depth, interval, presence`. Return value is tuplelist. Presence is `{ChunkCount, [ChunkNumber1, ChunkNumber2, ...]}`, representing some internal report.

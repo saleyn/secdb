@@ -56,10 +56,7 @@ handle_event(RawEvent, #saver{transform = {M,F,A}, db = DB1} = Saver) ->
     List when is_list(List) -> List;
     Evt when is_tuple(Evt) -> [Evt]
   end,
-  DB2 = lists:foldl(fun(Event, DB) ->
-    {ok, DB_} = secdb:append(Event, DB),
-    DB_
-  end, DB1, Events),
+  DB2 = lists:foldl(fun(Event, DB) -> secdb:append(Event, DB) end, DB1, Events),
   {ok, Saver#saver{db = DB2}}.
 
 

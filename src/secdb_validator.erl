@@ -1,5 +1,6 @@
 -module(secdb_validator).
 -include("secdb.hrl").
+-include("../include/secdb.hrl").
 -include("log.hrl").
 -include_lib("kernel/include/file.hrl").
 -include_lib("eunit/include/eunit.hrl").
@@ -8,10 +9,10 @@
 -export([validate/1]).
 
 
-validate(#db{path = Path, chunkmap = #cm{h=[],t=[]}, chunkmap_offset = ChunkMapOffset, chunk_size = ChunkSize} = State) ->
-  ChunkCount = ?NUMBER_OF_CHUNKS(ChunkSize),
+validate(#db{path=Path, chunkmap = #cm{h=[],t=[]}, chunkmap_pos=CMOffset, window_sec=I} = DB) ->
+  ChunkCount   = ?NUMBER_OF_CHUNKS(I),
   ChunkMapSize = ChunkCount*?OFFSETLEN_BITS div 8,
-  GoodFileSize = ChunkMapOffset + ChunkMapSize,
+  GoodFileSize = CMOffset + ChunkMapSize + 1,  % 1 is for BOF marker
   case file:read_file_info(Path) of
     {ok, #file_info{size = Size}} when Size > GoodFileSize ->
       error_logger:error_msg("Empty database ~s is longer than required size, truncating all records~n", [Path]),
@@ -19,37 +20,46 @@ validate(#db{path = Path, chunkmap = #cm{h=[],t=[]}, chunkmap_offset = ChunkMapO
       file:position(F, GoodFileSize),
       file:truncate(F),
       file:close(F),
-      State;
+      DB;
     {ok, #file_info{size = Size}} when Size < GoodFileSize ->
       error_logger:error_msg("Empty database ~s is shorter and have broken chunk map, delete it~n", [Path]),
-      State;
+      DB;
     {ok, #file_info{size = GoodFileSize}} ->
-      State
+      DB
   end;
   
-validate(#db{path = Path, file = File, chunkmap = ChunkMap = #cm{}, chunkmap_offset = ChunkMapOffset, chunk_size = ChunkSize} = State) ->
-  {Number, Timestamp, Offset} = secdb_cm:last(ChunkMap),
-  {ok, #file_info{size = Size}} = file:read_file_info(Path),
-  AbsOffset = ChunkMapOffset + Offset,
-  {ok, LastChunk} = file:pread(File, AbsOffset, Size),
+validate(#db{path=Path, file=F, chunkmap=ChunkMap = #cm{}, window_sec= I, data_pos=Start} = DB) ->
+  {Number, TS, Offset, Candle} = secdb_cm:last(ChunkMap),
+  {ok, #file_info{size=Size}}  = file:read_file_info(Path),
+  ChunkOffset                  = Start + Offset,
+  ChunkLen                     = Size-ChunkOffset,
+  {ok, EOCMmarker}             = file:pread(F, Start, 1),
+
+  Candle =:= undefined orelse is_record(Candle, candle)
+    orelse throw({invalid_last_candle, Number}),
+
+  <<16#FF>> =:= EOCMmarker orelse
+    throw({invalid_end_of_chunkmap_marker, Path}),
+
+  {ok, LastChunk}  = file:pread(F, ChunkOffset, ChunkLen),
   
-  State1 = case validate_chunk(LastChunk, 0, State) of
-    {ok, State1_} ->
-      State1_;
+  State1 = case validate_chunk(LastChunk, DB, I, 0) of
+    {ok, _DB} ->
+      DB;
     {error, State1_, BadOffset} ->
       error_logger:error_msg("Database ~s is broken at offset ~B, truncating~n", [Path, BadOffset]),
-      {ok, F} = file:open(Path, [write,read,binary,raw]),
-      file:position(F, AbsOffset + BadOffset),
-      file:truncate(F),
-      file:close(F),
+      {ok, File} = file:open(Path, [write,read,binary,raw]),
+      file:position(File, ChunkOffset + BadOffset),
+      file:truncate(File),
+      file:close(File),
       State1_
   end,
   
-  Daystart = utc_to_daystart(Timestamp),
+  Daystart = utc_to_daystart(TS),
 
   State1#db{
     daystart = Daystart,
-    next_chunk_time = Daystart + timer:seconds(ChunkSize) * (Number + 1)
+    next_chunk_time = Daystart + timer:seconds(I) * (Number + 1)
   }.
   
 utc_to_daystart(UTC) ->
@@ -58,18 +68,13 @@ utc_to_daystart(UTC) ->
   UTC - DayTail.
 
 
-validate_chunk(<<>>, _, State) ->
-  {ok, State};
-
-validate_chunk(Chunk, Offset, #db{last_md = MD, depth = Depth, scale = Scale} = State) ->
+validate_chunk(Bin, DB, _Size, Offset) when byte_size(Bin) =:= 0; byte_size(Bin) =:= Offset->
+  {ok, DB};
+validate_chunk(Chunk, #db{} = DB, Size, Offset) ->
   % ?debugFmt("decode_packet ~B/~B ~B ~B ~p", [Offset, size(Chunk),Depth, Scale, MD]),
-  case secdb_format:decode_packet(Chunk, Depth, MD, Scale) of
-    {ok, {md, TS, _Bid, _Ask} = NewMD, Size} ->
-      <<_:Size/binary, Rest/binary>> = Chunk,
-      validate_chunk(Rest, Offset + Size, State#db{last_md = NewMD, last_timestamp = TS});
-    {ok, {trade, TS, _, _}, Size} ->
-      <<_:Size/binary, Rest/binary>> = Chunk,
-      validate_chunk(Rest, Offset + Size, State#db{last_timestamp = TS});
+  case secdb_format:decode_packet(Chunk, Offset, DB) of
+    {_Mode, _Packet, Offset1, #db{} = NewDB} when is_integer(Offset1) ->
+      validate_chunk(Chunk, NewDB, Size, Offset1);
     {error, _Reason} ->
-      {error, State, Offset}
+      {error, DB, Size - byte_size(Chunk)}
   end.

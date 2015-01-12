@@ -1,2 +1,7 @@
+-ifdef(DEBUG).
 -define(D(X), io:format("~p:~p ~240p~n", [?MODULE, ?LINE, X])).
--define(DBG(Fmt,X), io:format("~p:~p "++Fmt++"~n", [?MODULE, ?LINE | X])).
+-define(DBG(Fmt,X), io:format("~w:~w "++Fmt++"~n", [?MODULE, ?LINE | X])).
+-else.
+-define(D(_X), ok).
+-define(DBG(_Fmt,_X), ok).
+-endif.
