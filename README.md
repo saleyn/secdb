@@ -32,9 +32,9 @@ Typical workflow when appending data to DB:
 
 Now lets explain, what is happening.
 
-* Open appender. Stock name should be a symbol, date should either erlang date `{YYYY,MM,DD}`, either a string `"YYYY-MM-DD"`.
+* Open appender. Symbol name should be a symbol, date should either erlang date `{YYYY,MM,DD}`, either a string `"YYYY-MM-DD"`.
 * Don't forget to specify proper depth. If you skip it, default depth is 1 and you will save only best bid and best ask
-* Specify also `{scale, 1000}` option, if you want to store quotes with precision less than 1 cent. Stockdb stores your prices as int: `round(Price*Scale)`
+* Specify also `{scale, 1000}` option, if you want to store quotes with precision less than 1 cent. Secdb stores your prices as int: `round(Price*Scale)`
 * Now append market data.
 * Market data is following: ```{md, UtcMilliseconds, [{L1BidPrice,L1BidSize},{L2BidPrice,L2BidSize}..], [{L1AskPrice,L2AskSize}..]}```
 * You can include ```-include_lib("secdb/include/secdb.hrl").``` to use ```#md{}``` and ```#trade{}``` records
@@ -114,7 +114,7 @@ To use pre-defined filters you can just specify filter name:
     28> length(secdb:events(CIterator)).
     2242
 
-StockDB index is optimized for fast timestamp seeking, so you can use `{range, Start, End}` pseudo-filter. Start and End (if defined)
+SecDB index is optimized for fast timestamp seeking, so you can use `{range, Start, End}` pseudo-filter. Start and End (if defined)
 are both millisecond timestamps or erlang-style `{HH, MM, SS}` tuples (tuples will work only over DB source, not over other iterator). `undefined` for `Start` or `End` means the very beginning or the very end respectively. Example:
 
     31> {ok, RIterator} = secdb:init_reader('NASDAQ.AAPL', "2012-08-07", [{range, {14,0,0}, {15,0,0}}]),
@@ -143,7 +143,7 @@ Also, iterators may cascade:
 Self-sufficient read-only state
 -------------------------------
 
-Function `secdb:init_reader/3` currently accesses file directly. If you have distributed setup, it will fail. Stockdb is able to bypass this by using a lower-level `secdb:open_read/2`.
+Function `secdb:init_reader/3` currently accesses file directly. If you have distributed setup, it will fail. Secdb is able to bypass this by using a lower-level `secdb:open_read/2`.
 `open_read/2` returns in-memory read-only database state with full buffer and file descriptor closed. Actually, `secdb:init_reader/3` first opens DB using `secdb:open_read/2` and then calls `secdb:init_reader/2` on it. So does `secdb:events/2`. You can do the same:
 
     42> {ok, S} = secdb:open_read('NASDAQ.AAPL', {2012, 8,7}),
@@ -159,6 +159,6 @@ Querying existing data
 
 There are simple functions which let you know what data you have.
 * To list all stocks having any data in database, use `secdb:stocks()`
-* To list dates when some stock has any data, use `secdb:dates(Stock)`
-* To get date intersection between multiple stocks, use `secdb:common_dates([Stock1, Stock2, ...])`
-* To get some information about file, secdb instance or stock/date pair, use `secdb:info(Stockdb)`, `secdb:info(Filename)`, `secdb:info(Stock, Date)`, `secdb:info(Stock, Date, [Key1, Key2, ...])`. Key can be one of `path, stock, date, version, scale, depth, interval, presence`. Return value is tuplelist. Presence is `{ChunkCount, [ChunkNumber1, ChunkNumber2, ...]}`, representing some internal report.
+* To list dates when some stock has any data, use `secdb:dates(Symbol)`
+* To get date intersection between multiple stocks, use `secdb:common_dates([Symbol1, Symbol2, ...])`
+* To get some information about file, secdb instance or stock/date pair, use `secdb:info(Secdb)`, `secdb:info(Filename)`, `secdb:info(Symbol, Date)`, `secdb:info(Symbol, Date, [Key1, Key2, ...])`. Key can be one of `path, stock, date, version, scale, depth, interval, presence`. Return value is tuplelist. Presence is `{ChunkCount, [ChunkNumber1, ChunkNumber2, ...]}`, representing some internal report.
